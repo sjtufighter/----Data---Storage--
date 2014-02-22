@@ -31,5 +31,5 @@ CONVEY  THANKS
 
    
     thanks JieYiShen  for  his  help   in    instruct  me ! 
-
-I  REALLY  HOPE   THAT  YOU  CAN    JOIN   IN  THIS   PROJECT  .
+    
+This  is  my first open source project on  here , it  is  my  honor   to  obtain  your  instructions ! Many  Thanks
