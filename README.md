@@ -32,4 +32,4 @@ CONVEY  THANKS
    
     thanks JieYiShen  for  his  help   in    instruct  me ! 
     
-This  is  my first open source project on  here , it  is  my  honor   to  obtain  your  instructions ! Many  Thanks
+This  is  my first open source project at  here , it  is  my  pleasure to share with you ! Many  Thanks
