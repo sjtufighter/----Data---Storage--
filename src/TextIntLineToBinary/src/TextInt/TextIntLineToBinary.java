@@ -22,7 +22,6 @@ public class TextIntLineToBinary {
 		try {
 			BufferedReader bw = new BufferedReader(new FileReader(file));
 			String line = null;
-			//因为不知道有几行数据，所以先存入list集合中
 			while((line = bw.readLine()) != null){
 				list.add(line);
 			}
