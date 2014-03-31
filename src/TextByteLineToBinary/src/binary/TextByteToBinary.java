@@ -1,6 +1,4 @@
 package binary;
-
-
 import java.io.BufferedReader;
 import java.io.DataOutputStream;
 import java.io.File;
@@ -8,11 +6,7 @@ import java.io.FileOutputStream;
 import java.io.FileReader;
 import java.io.IOException;
 import java.util.ArrayList;
-
-
 public class TextByteToBinary {
-
-
 	private static  byte[] nums ;
 	private static int count=0 ;
 	public static byte[] writeToDat(String path) {
