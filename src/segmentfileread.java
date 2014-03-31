@@ -1,11 +1,9 @@
 package segmentfileread;
-
 import java.io.DataInput;
 import java.io.File;
 import java.io.IOException;
 import java.net.URI;
 import java.util.List;
-
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FSDataInputStream;
 import org.apache.hadoop.fs.FileStatus;
@@ -13,7 +11,6 @@ import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.FileUtil;
 import org.apache.hadoop.fs.Path;
 import org.hamcrest.core.IsSame;
-
 import cn.ac.ncic.mastiff.io.segmentfile.PageMetaList;
 import cn.ac.ncic.mastiff.io.segmentfile.PageMetaSection;
 import cn.ac.ncic.mastiff.utils.Bytes;
