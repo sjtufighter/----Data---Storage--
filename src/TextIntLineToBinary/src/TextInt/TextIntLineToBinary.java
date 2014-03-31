@@ -1,5 +1,4 @@
 package TextInt;
-
 import java.awt.List;
 import java.io.BufferedReader;
 import java.io.DataInputStream;
@@ -11,7 +10,6 @@ import java.io.FileOutputStream;
 import java.io.FileReader;
 import java.io.IOException;
 import java.util.ArrayList;
-
 public class TextIntLineToBinary {
 	private static  int[] nums ;
 	private static int count= 0 ;
