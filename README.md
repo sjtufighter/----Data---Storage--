@@ -4,7 +4,6 @@ Flexible-optimized  segment  file(FOSF)
 
    FOSF  is adapted from the previouse file format mastiff-segmentfile , which  does  not have relationship whith Hive . Mastiff  is  a  time-based system which  is used for data stream proccess .We find its storage format-- segmentFile  has  a  theoretic  advantage -- MaxMinIndex  which can be used for  the where--filter  in  Sql of  Hive. But  it has  some defaults: this mastiff's  pratical efficieny  can  not face up  with  its theory advantages； mastiff  has  the  design  errors  in  its  IndexFilterComputing ;mastiff  is  a  small minority system  which lack of  more   engineers  to develop  ，optimize   and  extended   especially    when  compared with Apache Hive team ；at last ,this  system lack  of  efficient , flexible 
 encoding methodhs and  just use the heavy compression  LZO and ZLIB .
-
    
     At  the same  time, I  focused  on  the Parquet   
 https://github.com/Parquet  ,which   has  efficient encoding methods for different Types   and I  also  pay attention  to the ORC ,which have a little  encoding methods .
