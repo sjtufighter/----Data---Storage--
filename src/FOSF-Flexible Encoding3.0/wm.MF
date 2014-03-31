@@ -1,5 +1,0 @@
-Manifest-Version: 1.0
-Class-Path: . test_lib/fastutil-6.5.12.jar test_lib/fastutil-6.5.12-ja
- vadoc.jar test_lib/fastutil-6.5.12-sources.jar test_lib/hive-testutil
- s-0.11.0.jar test_lib/junit-4.10.jar test_lib/hadoop-core-0.20.2.jar 
- test_lib/protobuf-java-2.4.1.jar test_lib/snappy-0.2.jar
