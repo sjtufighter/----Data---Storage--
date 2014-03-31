@@ -1,6 +1,6 @@
 Flexible-optimized  segment  file(FOSF)
 
-   FOSF  is  a  new storage format  which  is  more efficient ,flexible . It  can  also  save  more storage spaces  and speed up the sql  query than Hive-RCFile. It  has    similarity   with  ORC File  on  both  use the IndexFilter to speed  up  the query . http://docs.hortonworks.com/HDPDocuments/HDP2/HDP-2.0.0.2/ds_Hive/orcfile.html.
+   FOSF  is  a  new storage format  which  is  more efficient ,flexible . It  can  also  save  more storage spaces  and speed up the sql  query than Hive-RCFile，even  when compared with ORC. It  has    similarity   with  ORC File  on  both  use the IndexFilter to speed  up  the query . http://docs.hortonworks.com/HDPDocuments/HDP2/HDP-2.0.0.2/ds_Hive/orcfile.html.
 
    FOSF  is adapted from the previouse file format mastiff-segmentfile , which  does  not have relationship whith Hive . Mastiff  is  a  time-based system which  is used for data stream proccess .We find its storage format-- segmentFile  has  a  theoretic  advantage -- MaxMinIndex  which can be used for  the where--filter  in  Sql of  Hive. But  it has  some defaults: this mastiff's  pratical efficieny  can  not face up  with  its theory advantages； mastiff  has  the  design  errors  in  its  IndexFilterComputing ;mastiff  is  a  small minority system  which lack of  more   engineers  to develop  ，optimize   and  extended   especially    when  compared with Apache Hive team ；at last ,this  system lack  of  efficient , flexible 
 encoding methodhs and  just use the heavy compression  LZO and ZLIB .
