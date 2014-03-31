@@ -2,6 +2,8 @@ package org.apache.hadoop.hive.mastiff;
 
 import java.io.Closeable;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.UnsupportedEncodingException;
 import java.lang.management.ManagementFactory;
 import java.lang.management.MemoryUsage;
 import java.nio.ByteBuffer;
@@ -18,9 +20,21 @@ import org.apache.hadoop.fs.FSDataOutputStream;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.hive.mastiff.SerializeUtil.PageId;
+import org.apache.hadoop.hive.mastiffFlexibleEncoding.orc.OutStream;
+//import FlexibleEncoding.ORC.RunLengthByteWriter;
+import org.apache.hadoop.hive.mastiffFlexibleEncoding.orc.RunLengthByteWriter;
+import org.apache.hadoop.hive.mastiffFlexibleEncoding.orc.RunLengthIntegerWriter;
+import org.apache.hadoop.hive.mastiffFlexibleEncoding.orc.TestInStream;
+import org.apache.hadoop.hive.mastiffFlexibleEncoding.parquet.Binary;
+import org.apache.hadoop.hive.mastiffFlexibleEncoding.parquet.BytesInput;
+import org.apache.hadoop.hive.mastiffFlexibleEncoding.parquet.DeltaBinaryPackingValuesWriter;
+import org.apache.hadoop.hive.mastiffFlexibleEncoding.parquet.DeltaByteArrayWriter;
+import org.apache.hadoop.hive.mastiffFlexibleEncoding.parquet.OnlyDictionaryValuesWriter.PlainBinaryDictionaryValuesWriter;
+import org.apache.hadoop.hive.mastiffFlexibleEncoding.parquet.OnlyDictionaryValuesWriter.PlainIntegerDictionaryValuesWriter;
 import org.apache.hadoop.io.BytesWritable;
 import org.apache.hadoop.io.DataInputBuffer;
 import org.apache.hadoop.io.DataOutputBuffer;
+import org.apache.hadoop.io.IOUtils;
 import org.apache.hadoop.io.Writable;
 import org.apache.hadoop.mapred.JobConf;
 import org.apache.hadoop.mapred.Reporter;
@@ -34,9 +48,9 @@ import cn.ac.ncic.mastiff.hive.serde.lazy.ClusterAccessor.DataType;
 import cn.ac.ncic.mastiff.hive.serde.lazy.Row;
 import cn.ac.ncic.mastiff.io.PosRLEChunk;
 import cn.ac.ncic.mastiff.io.coding.Compression.Algorithm;
+import cn.ac.ncic.mastiff.io.coding.EnDecode;
 import cn.ac.ncic.mastiff.io.coding.Encoder;
 import cn.ac.ncic.mastiff.io.coding.Encoder.CodingType;
-import cn.ac.ncic.mastiff.io.coding.FixedLenEncoder;
 import cn.ac.ncic.mastiff.io.coding.VarLenEncoder;
 import cn.ac.ncic.mastiff.io.segmentfile.BlockCache;
 import cn.ac.ncic.mastiff.io.segmentfile.LruBlockCache;
@@ -53,9 +67,9 @@ import cn.ac.ncic.mastiff.utils.Bytes;
 import cn.ac.ncic.mastiff.utils.Utils;
 
 /**
- * File format
+ * File format for mastiff.
  *
- *  @author wangmeng
+ * Copied from {@link cn.ac.ncic.mastiff.io.segmentfile.SegmentFile}
  */
 public class SegmentFile {
   static final Log LOG = LogFactory.getLog(SegmentFile.class);
@@ -63,16 +77,24 @@ public class SegmentFile {
   public static final String SEGFILE_CACHE_SIZE_KEY = "mastiff.pagecache.size";
 
   private static BlockCache globalPageCache = null;
-  // public static long appendint=0;
-  //  public static long  Rowmapappendint =0 ;
+
   /**
    * SegmentFile Writer.
    */
   public static class Writer implements Closeable {
 
     public class TabConfig {
-      // original row
-      // String delimiter;
+      private  PlainBinaryDictionaryValuesWriter[]   dictionaryBitPackingRLEZigZarByte=null;
+      private  PlainIntegerDictionaryValuesWriter[]   dictionaryBitPackingRLEZigZarInt=null;
+      private  TestInStream.OutputCollector[]  collect=null;
+      private  DeltaBinaryPackingValuesWriter[]  deltaBianryBitPackingInt=null ;
+      private DeltaByteArrayWriter[]  deltaByteArrayWriter=null ;
+      private RunLengthIntegerWriter[]   runLengthInteger=null;
+      private  RunLengthByteWriter[]   runLengthByte=null;
+      private boolean[]  pageInit;
+      private  int[] pagesizes ;
+      private Algorithm[] algorithms ;
+      public boolean isInit=false ,isFirst=true ;
       private  DataType[][] originalTableSchema;
       private  List<List<DataType>> originalSchema;
       private int numFields;
@@ -88,22 +110,23 @@ public class SegmentFile {
       private  ValPair[] backupVps;
       private  PageMeta[] pms;
       private  int[] pageIds;
+      private  long  pageIdCount=0 ;
       private  long sgementSize = 0;
-      // used for rle compression
       private int[] startPoss, numReps;
-      private  PageId segId;
+      public  PageId segId;
       //   HashMap<Integer, List<BytesWritable>> segmentValue = new HashMap<Integer, List<BytesWritable>>();
-      private final  ArrayList<List<BytesWritable>> clusterValue = new ArrayList<List<BytesWritable>>(SerializeUtil.desc.clusterTypes.size());
+      //     private final  ArrayList<List<BytesWritable>> clusterValue = new ArrayList<List<BytesWritable>>(SerializeUtil.desc.clusterTypes.size());
+      private  ArrayList<List<BytesWritable>> clusterValue =null;
       private final  BytesWritable outValue = new BytesWritable();
       private final DataOutputBuffer out = new DataOutputBuffer();
-      private final  int debugrows = 0;
-      private final   long SegmentSize=536870912-SerializeUtil.desc.clusterTypes.size()*131072;
+      //   private final   long SegmentSize=536870912-SerializeUtil.desc.clusterTypes.size()*131072;
+      private final   long SegmentSize=33554432*8-SerializeUtil.desc.clusterTypes.size()*131072*4;
+      //     private final   long SegmentSize=1048576-SerializeUtil.desc.clusterTypes.size()*131072;
       private final  int[] tmpLength = new int[1];
       private int[][] columnsMapping;
-      //long count=0;
       private final  DataInputBuffer in = new DataInputBuffer();
 
-      public   void configure(JobConf job, Properties tbl) throws IOException {
+      public void configure(JobConf job, Properties tbl) throws IOException {
         int numClusters = SerializeUtil.desc.clusterTypes.size();
         if (numClusters != SerializeUtil.desc.clusterAlgos.length) {
           throw new RuntimeException("Please check the cluster algorithms, " +
@@ -128,6 +151,22 @@ public class SegmentFile {
             }
           }
         }
+
+
+        runLengthInteger=new  RunLengthIntegerWriter[numClusters] ;
+        runLengthByte=new  RunLengthByteWriter[numClusters] ;
+        collect=new  TestInStream.OutputCollector[numClusters] ;
+        deltaBianryBitPackingInt=new DeltaBinaryPackingValuesWriter[numClusters] ;
+        deltaByteArrayWriter=new DeltaByteArrayWriter[numClusters] ;
+        dictionaryBitPackingRLEZigZarInt=new  PlainIntegerDictionaryValuesWriter[numClusters] ;
+        dictionaryBitPackingRLEZigZarByte=new  PlainBinaryDictionaryValuesWriter[numClusters] ;
+        pageInit=new boolean[numClusters];
+
+
+        for(int i=0 ;i<numClusters;i++){
+          pageInit[i]=false;
+
+        }
         // replace DataType.DATE to DataType.LONG
         for (int i = 0; i < SerializeUtil.desc.clusterTypes.size(); i++) {
           for (int j = 0; j < SerializeUtil.desc.clusterTypes.get(i).size(); j++) {
@@ -136,71 +175,76 @@ public class SegmentFile {
             }
           }
         }
-        //   int pagesize = MastiffMapReduce.getTablePageSize(job);
-        int pagesize =131072;
+        //    TestInStream.OutputCollector[]  collect=null;
+        //   FixedLenEncoder   fixedEncoding=null;
+        //  RunLengthIntegerWriter[]   rleEncoding=null;
+        // int pagesize = MastiffMapReduce.getTablePageSize(job);
+        int pagesize = 131072*4;
         cluster_pages = new int[numClusters];
+
         for (int i = 0; i < numClusters; i++) {
 
-          if (SerializeUtil.desc.clusterCodingTypes[i] == CodingType.RLE) {
-            cluster_pages[i] = pagesize;
-          } else {
-            cluster_pages[i] = SerializeUtil.desc.clusterAlgos[i] == null ?
-                pagesize : SerializeUtil.desc.clusterAlgos[i].getScaleRatio() * pagesize;
-          }
+          //          if (SerializeUtil.desc.clusterCodingTypes[i] == CodingType.RLE) {
+          //            cluster_pages[i] = pagesize;
+          //          } else {
+          cluster_pages[i] = pagesize ;
+          //          cluster_pages[i] = SerializeUtil.desc.clusterAlgos[i] == null ?
+          //              pagesize : SerializeUtil.desc.clusterAlgos[i].getScaleRatio() * pagesize;
+          //  }
         }
-        for (int b = 0; b < numClusters; b++) {
-          //  switch (b){
-          //     case 0:
-          //  clusterValue.add(new ArrayList<BytesWritable>(90));
-          clusterValue.add(new ArrayList<BytesWritable>(40));
-          //  //       break ;
-          //     //  case 1:
-          //       //  clusterValue.add(new ArrayList<BytesWritable>(175));
-          //           clusterValue.add(new ArrayList<BytesWritable>(40));
-          //   //      break ;
-          //  //     case 2:
-          //    //     clusterValue.add(new ArrayList<BytesWritable>(90));
-          //         clusterValue.add(new ArrayList<BytesWritable>(40));
-          ////         break ;
-          //       case 3:
-          //       //  clusterValue.add(new ArrayList<BytesWritable>(680));
-          //         clusterValue.add(new ArrayList<BytesWritable>(40));
-          //         break ;
-          //       case 4:
-          //        clusterValue.add(new ArrayList<BytesWritable>(45));
-          //         break ;
-          //       case 5:
-          //  //       clusterValue.add(new ArrayList<BytesWritable>(170));
-          //         clusterValue.add(new ArrayList<BytesWritable>(40));
-          //         break ;
-          //       case 6:
-          //       //  clusterValue.add(new ArrayList<BytesWritable>(170));
-          //         clusterValue.add(new ArrayList<BytesWritable>(40));
-          //         break ;
-          //       case 7:
-          //      //   clusterValue.add(new ArrayList<BytesWritable>(170));
-          //         clusterValue.add(new ArrayList<BytesWritable>(40));
-          //         break ;
-          //       case 8:
-          //       //  clusterValue.add(new ArrayList<BytesWritable>(1120));
-          //         clusterValue.add(new ArrayList<BytesWritable>(40));
-          //         break ;
-          //       }
-
-        }
+        //        for (int b = 0; b < numClusters; b++) {
+        //          //  switch (b){
+        //          //     case 0:
+        //          //  clusterValue.add(new ArrayList<BytesWritable>(90));
+        //          clusterValue.add(new ArrayList<BytesWritable>(512));
+        //          //  //       break ;
+        //          //     //  case 1:
+        //          //       //  clusterValue.add(new ArrayList<BytesWritable>(175));
+        //          //           clusterValue.add(new ArrayList<BytesWritable>(40));
+        //          //   //      break ;
+        //          //  //     case 2:
+        //          //    //     clusterValue.add(new ArrayList<BytesWritable>(90));
+        //          //         clusterValue.add(new ArrayList<BytesWritable>(40));
+        //          ////         break ;
+        //          //       case 3:
+        //          //       //  clusterValue.add(new ArrayList<BytesWritable>(680));
+        //          //         clusterValue.add(new ArrayList<BytesWritable>(40));
+        //          //         break ;
+        //          //       case 4:
+        //          //        clusterValue.add(new ArrayList<BytesWritable>(45));
+        //          //         break ;
+        //          //       case 5:
+        //          //  //       clusterValue.add(new ArrayList<BytesWritable>(170));
+        //          //         clusterValue.add(new ArrayList<BytesWritable>(40));
+        //          //         break ;
+        //          //       case 6:
+        //          //       //  clusterValue.add(new ArrayList<BytesWritable>(170));
+        //          //         clusterValue.add(new ArrayList<BytesWritable>(40));
+        //          //         break ;
+        //          //       case 7:
+        //          //      //   clusterValue.add(new ArrayList<BytesWritable>(170));
+        //          //         clusterValue.add(new ArrayList<BytesWritable>(40));
+        //          //         break ;
+        //          //       case 8:
+        //          //       //  clusterValue.add(new ArrayList<BytesWritable>(1120));
+        //          //         clusterValue.add(new ArrayList<BytesWritable>(40));
+        //          //         break ;
+        //          //       }
+        //
+        //        }
 
         preConfigure(job, storageSchema, ETLUtils.getSchema(SerializeUtil.desc.clusterTypes),
             cluster_pages, SerializeUtil.desc.clusterAlgos, SerializeUtil.desc.clusterCodingTypes,
             SerializeUtil.desc.columnsMapping);
       }
 
-      public     void preConfigure(JobConf job, DataType[][] originalTypes,
+      public void preConfigure(JobConf job, DataType[][] originalTypes,
           DataType[][] clusterTypes, int[] pagesizes, Algorithm[] algorithms,
           CodingType[] codings, int[][] columnsMapping) {
         this.columnsMapping = columnsMapping;
         this.codings = codings;
-        originalSchema = ETLUtils.getSchema(originalTypes);// //浜嬪疄涓婂彧鏈変粬鐨剆ize涓�
-        numFields = originalSchema.get(0).size();// //鍒楃殑涓暟
+        originalSchema = ETLUtils.getSchema(originalTypes);// //���������������������������������ize������
+        numFields = originalSchema.get(0).size();// //������������������
         clusterSchema = ETLUtils.getSchema(clusterTypes);
         numClusters = clusterSchema.size();
         accessors = new ClusterAccessor[numClusters];
@@ -218,22 +262,31 @@ public class SegmentFile {
         pageIds = new int[numClusters];
         startPoss = new int[numClusters];
         numReps = new int[numClusters];
-
+        this.pagesizes=pagesizes;
+        this.algorithms=algorithms;
         for (int i = 0; i < numClusters; i++) {
           accessors[i] = new ClusterAccessor();
           accessors[i].init(clusterSchema.get(i));
           backups[i] = new ClusterAccessor(accessors[i]);
           rows[i] = new Row(clusterSchema.get(i));
           prevRows[i] = null;
-          if (codings[i] == CodingType.RLE) {
+          //          if (codings[i] != CodingType.MV) {
+          //            algorithms[i] = null;
+          //          }
+          if (Algorithm.NONE ==SerializeUtil.desc.clusterAlgos[i]) {
             algorithms[i] = null;
           }
           if (accessors[i].getFixedLen() > 0) {
-            compressors[i] = new FixedLenEncoder(pagesizes[i],
-                accessors[i].getFixedLen()
-                + (codings[i] == CodingType.RLE ? 2 * Bytes.SIZEOF_INT : 0),
-                0, algorithms[i]);
+            //            compressors[i] = new FixedLenEncoder(pagesizes[i],
+            //                accessors[i].getFixedLen()
+            //                + (codings[i] == CodingType.RLE ? 2 * Bytes.SIZEOF_INT : 0),
+            //                0, algorithms[i]);
+            //            compressors[i] = new FixedLenEncoder(pagesizes[i],
+            //                accessors[i].getFixedLen(), 0, algorithms[i]);
+
+            compressors[i]=EnDecode.getEncoder(pagesizes[i],accessors[i].getFixedLen(), 0, algorithms[i],codings[i]);
           } else {
+
             compressors[i] = new VarLenEncoder(pagesizes[i], 0, algorithms[i]);
           }
           compressors[i].reset();
@@ -252,14 +305,28 @@ public class SegmentFile {
         segId = new PageId();
         segId.setSegmentId(Math.random() * 100 + "");
         // String taskId = job.get("mapred.tip.id");
-        //     String    taskId = ETLUtils.getTaskId(job);
-        //        segId.setSegmentId(taskId);
+        // String taskId = ETLUtils.getTaskId(job);
+        // segId.setSegmentId(taskId);
       }
-
+      public void updateMaxMins(Row oldMax, Row oldMin, Row newMax, Row newMin) {
+        int size = oldMax.size();
+        for (int i = 0; i < size; i++) {
+          Comparable maxCp = (Comparable) newMax.get(i).getObject();
+          if (maxCp.compareTo(oldMax.get(i).getObject()) > 0) {
+            oldMax.get(i).setObject(newMax.get(i).getPrimitiveObject());
+          }
+          Comparable minCp = (Comparable) newMin.get(i).getObject();
+          if (minCp.compareTo(oldMin.get(i).getObject()) < 0) {
+            oldMin.get(i).setObject(newMin.get(i).getPrimitiveObject());
+          }
+        }
+      }
       void outputPage(int i) throws IOException {
         // 1) prepare the page
         byte[] page = compressors[i].getPage();
+
         int pageLen = compressors[i].getPageLen();
+
         if (page == null || pageLen <= 0) {
           return;
         }
@@ -269,6 +336,7 @@ public class SegmentFile {
 
         // 2) write page meta
         backupVps[i].data = backups[i].serialize(maxs[i], tmpLength);
+
         backupVps[i].offset = 0;
         backupVps[i].length = tmpLength[0];
         backupVps[i].write(out);
@@ -280,25 +348,33 @@ public class SegmentFile {
         backupVps[i].write(out);
         out.writeInt(pms[i].startPos);
         out.writeInt(pms[i].numPairs);
+
         // set max & min row of current segment
         if (segMaxs[i] == null || segMins[i] == null) {
           segMaxs[i] = maxs[i];
           segMins[i] = mins[i];
+
         } else {
-          Row.updateMaxMins(segMaxs[i], segMins[i], maxs[i], mins[i]);
+
+          //    Row.updateMaxMins(segMaxs[i], segMins[i], maxs[i], mins[i]);
+          updateMaxMins(segMaxs[i], segMins[i], maxs[i], mins[i]);
+
+
         }
 
         // 3) output the page
         segId.setPageId(pageIds[i]);
         segId.setClusterId(i);
-        //        if (clusterValue.size() == 0) {
-        //          for (int b = 0; b < numClusters; b++) {
-        //            clusterValue.add(new ArrayList<BytesWritable>());
-        //          }
-        //
-        //        }
 
 
+        if(!isInit){
+          isInit=true ;
+          clusterValue=new ArrayList<List<BytesWritable>>(SerializeUtil.desc.clusterTypes.size());
+          for (int b = 0; b < numClusters; b++) {
+            clusterValue.add(new ArrayList<BytesWritable>(512));
+          }
+
+        }
         clusterValue.get(i).add(new BytesWritable());
         clusterValue.get(i).get(clusterValue.get(i).size() - 1)
         .set(out.getData(), 0, out.getLength());
@@ -315,50 +391,211 @@ public class SegmentFile {
       void SegmentMeta() throws IOException {
 
         for (int i = 0; i < numClusters; i++) {
-          if (codings[i] == CodingType.RLE) {
-            vps[i].data = accessors[i].serialize(prevRows[i], startPoss[i],
-                numReps[i], tmpLength);
-            vps[i].offset = 0;
-            vps[i].length = tmpLength[0];
-            vps[i].pos = startPoss[i]; // TODO: do we need to set this pos?
-            while (!compressors[i].append(vps[i])) {
-              outputPage(i);
-            }
-            // update page meta
-            if (maxs[i] == null || mins[i] == null) {
-              maxs[i] = prevRows[i].duplicate();
-              mins[i] = prevRows[i].duplicate();
-            } else {
-              prevRows[i].compareAndSetMaxMin(maxs[i], mins[i]);
-            }
-            pms[i].numPairs += numReps[i];
+
+          if(codings[i]==CodingType.MV){
+            outputPage(i);
           }
-          outputPage(i);
-        }
-        // write out the segment infomations
+          else if(codings[i]==CodingType.RunLengthEncodingInt){
+            lastPageRunLengthEncodingInt( i);
+          }
+          else if(codings[i]==CodingType.RunLengthEncodingByte){
+            lastPageRunLengthEncodingByte( i);
+          }
+          else if(codings[i]==CodingType.RunLengthEncodingLong){
+            lastPageRunLengthEncodingLong(i);
+          }
+          else if(codings[i]==CodingType.DeltaBinaryArrayZigZarByte){
+            //  lastPageRunLengthEncodingByte( i);
+            lastPageDeltaBinaryArraysBitPackingByte(i);
+          }
+          else if(codings[i]==CodingType.DeltaBinaryBitPackingZigZarInt){
+            //   lastPageRunLengthEncodingByte( i);
+            lastPageDeltaBinaryBitPackingInt(i);
+          }
+          else if(codings[i]==CodingType.DeltaBinaryBitPackingZigZarLong){
+            //   lastPageRunLengthEncodingByte( i);
+            lastPageDeltaBinaryBitPackingLong(i);
+          }
+          else if(codings[i]==CodingType.DictionaryBitPackingRLEByte){
+            //   lastPageRunLengthEncodingByte( i);
+            lastPageDictionaryBitPackingRLEZigZarByte(i);
+          }
+          else if(codings[i]==CodingType.DictionaryBitPackingRLEInt){
+            //   lastPageRunLengthEncodingByte( i);
+            lastPageDictionaryBitPackingRLEZigZarInt(i);
+          }
+          else if(codings[i]==CodingType.DictionaryBitPackingRLELong){
+            //   lastPageRunLengthEncodingByte( i);
+            lastPageDictionaryBitPackingRLEZigZarLong(i);
+          }
+          else {
+            throw new UnsupportedEncodingException("Wrong encoding Type");
+          }
+        }  // write out the segment infomations
         for (int i = 0; i < numClusters; i++) {
           outputSegmentMeta(i);
         }
 
       }
+      void   lastPageRunLengthEncodingInt(int  i) throws IOException{
+        runLengthInteger[i].flush();
+        ByteBuffer inBuf = ByteBuffer.allocate(collect[i].buffer.size());
+        //         collect.buffer.write(dos, 0, collect.buffer.size());
+        byte[] pageBytes=collect[i].buffer.getByteBuffer(inBuf, 0, collect[i].buffer.size()) ;
+        collect[i].buffer.clear();
+        inBuf.clear();
 
-      private  void outputSegmentMeta(int i)
+        vps[i].data=pageBytes ;
+        vps[i].offset = 0;
+        vps[i].length= pageBytes.length;
+
+        compressors[i].appendPage(vps[i]);
+
+        outputPage(i);
+        pageInit[i]=false;
+      }
+      void   lastPageRunLengthEncodingByte(int  i) throws IOException{
+        runLengthByte[i].flush();
+        ByteBuffer inBuf = ByteBuffer.allocate(collect[i].buffer.size());
+        //         collect.buffer.write(dos, 0, collect.buffer.size());
+        byte[] pageBytes=collect[i].buffer.getByteBuffer(inBuf, 0, collect[i].buffer.size()) ;
+        collect[i].buffer.clear();
+        inBuf.clear();
+        vps[i].data=pageBytes ;
+        vps[i].offset = 0;
+        vps[i].length= pageBytes.length;
+        compressors[i].appendPage(vps[i]);
+        outputPage(i);
+        pageInit[i]=false;
+      }
+      void   lastPageRunLengthEncodingLong(int  i) throws IOException{
+        throw  new  UnsupportedEncodingException("WangMeng  has  not  implement  this  method   on 03.27.2014  yet");
+      }
+      void   lastPageDeltaBinaryBitPackingInt(int  i) throws IOException{
+        BytesInput bi=deltaBianryBitPackingInt[i].getBytes() ;
+        byte[] pageBytes=bi.getBufferSize() ;
+        vps[i].data=pageBytes ;
+        vps[i].offset = 0;
+        vps[i].length= pageBytes.length;
+        try {
+          compressors[i].appendPage(vps[i]);
+        } catch (IOException e) {
+          e.printStackTrace();
+        }
+
+        try {
+          outputPage(i);
+        } catch (IOException e) {
+          e.printStackTrace();
+        }
+        pageInit[i]=false;
+      }
+      void   lastPageDeltaBinaryArraysBitPackingByte(int  i) throws IOException{
+        BytesInput  bi=deltaByteArrayWriter[i].getBytes();
+        byte[] pageBytes=bi.getBufferSize() ;
+        vps[i].data=pageBytes ;
+        vps[i].offset = 0;
+        vps[i].length= pageBytes.length;
+        try {
+          compressors[i].appendPage(vps[i]);
+        } catch (IOException e) {
+          e.printStackTrace();
+        }
+
+        try {
+          outputPage(i);
+        } catch (IOException e) {
+          e.printStackTrace();
+        }
+        pageInit[i]=false;
+      }
+      void   lastPageDeltaBinaryBitPackingLong(int  i) throws IOException{
+        throw  new  UnsupportedEncodingException("WangMeng  has  not  implement  this  method   on 03.27.2014  yet");
+      }
+      void   lastPageDictionaryBitPackingRLEZigZarByte(int  i) throws IOException{
+        BytesInput sbi= dictionaryBitPackingRLEZigZarByte[i].getBytes();
+        //  long tmp=cw.WriteDictionaryToDisk(s);
+        byte[]   dictionaryBuffer=dictionaryBitPackingRLEZigZarByte[i].getDictionaryBuffer();
+        //    long tmp1=  sbi.writeToDisk(str);
+        byte[]    dictionaryID=sbi.getBufferSize() ;
+        DataOutputBuffer  dob=new DataOutputBuffer() ;
+        dob.writeInt(dictionaryBuffer.length);
+        dob.write(dictionaryBuffer, 0, dictionaryBuffer.length);
+        dob.write(dictionaryID, 0, dictionaryID.length);
+        byte[] pageBytes=dob.getData() ;
+        dob.close();
+        vps[i].data=pageBytes ;
+        vps[i].offset = 0;
+        vps[i].length= pageBytes.length;
+        try {
+          compressors[i].appendPage(vps[i]);
+        } catch (IOException e) {
+          e.printStackTrace();
+        }
+
+        try {
+          outputPage(i);
+        } catch (IOException e) {
+          e.printStackTrace();
+        }
+        pageInit[i]=false;
+      }
+      void   lastPageDictionaryBitPackingRLEZigZarInt(int  i) throws IOException{
+
+        BytesInput sbi= dictionaryBitPackingRLEZigZarInt[i].getBytes();
+        //  long tmp=cw.WriteDictionaryToDisk(s);
+        byte[]   dictionaryBuffer=dictionaryBitPackingRLEZigZarInt[i].getDictionaryBuffer();
+        //    long tmp1=  sbi.writeToDisk(str);
+        byte[]    dictionaryID=sbi.getBufferSize() ;
+
+        DataOutputBuffer  dob=new DataOutputBuffer() ;
+        dob.writeInt(dictionaryBuffer.length);
+        dob.write(dictionaryBuffer, 0, dictionaryBuffer.length);
+        dob.write(dictionaryID, 0, dictionaryID.length);
+        byte[] pageBytes=dob.getData() ;
+        dob.close();
+        vps[i].data=pageBytes ;
+        vps[i].offset = 0;
+        vps[i].length= pageBytes.length;
+        try {
+          compressors[i].appendPage(vps[i]);
+        } catch (IOException e) {
+          e.printStackTrace();
+        }
+
+        try {
+          outputPage(i);
+        } catch (IOException e) {
+          e.printStackTrace();
+        }
+        pageInit[i]=false;
+      }
+      void   lastPageDictionaryBitPackingRLEZigZarLong(int  i) throws IOException{
+        throw  new  UnsupportedEncodingException("WangMeng  has  not  implement  this  method   on 03.27.2014  yet");
+      }
+      private void outputSegmentMeta(int i)
           throws IOException {
         out.reset();
         // 1) write segment meta
         backupVps[i].data = backups[i].serialize(segMaxs[i], tmpLength);
+
         backupVps[i].offset = 0;
         backupVps[i].length = tmpLength[0];
 
         backupVps[i].write(out);
+
 
         backupVps[i].data = backups[i].serialize(segMins[i], tmpLength);
         backupVps[i].length = tmpLength[0];
 
         // write min row
         backupVps[i].write(out);
+
         out.writeInt(0); // start pos of a segment is zero
         out.writeInt(pms[i].startPos);
+
+
+
 
         // 2) output the page
         segId.setPageId(-1); // meta data page is -1
@@ -368,11 +605,44 @@ public class SegmentFile {
         clusterValue.get(i).get(clusterValue.get(i).size() - 1)
         .set(out.getData(), 0, out.getLength());
         sgementSize = sgementSize + cluster_pages[i];
+        //        segMaxs[i]=null ;
+        //        segMins[i]=null ;
+        pms[i].startPos =0;
+        pms[i].numPairs = 0;
+        /////////////////////////////////
+        if (accessors[i].getFixedLen() > 0) {
+          //          compressors[i] = new FixedLenEncoder(pagesizes[i],
+          //              accessors[i].getFixedLen()
+          //              + (codings[i] == CodingType.RLE ? 2 * Bytes.SIZEOF_INT : 0),
+          //              0, algorithms[i]);
+          compressors[i]=EnDecode.getEncoder(pagesizes[i],
+              accessors[i].getFixedLen(), 0, algorithms[i],codings[i]);
+          compressors[i].reset();
+        } else {
+          compressors[i] = new VarLenEncoder(pagesizes[i], 0, algorithms[i]);
+          compressors[i].reset();
+        }
+        maxs[i] = mins[i] = null;
+        segMaxs[i]=null ;
+        segMins[i]=null ;
+        pms[i].startPos =0;
+        pms[i].numPairs = 0;
+        backups[i] = new ClusterAccessor(accessors[i]);
+        vps[i] = new ValPair();
+        backupVps[i] = new ValPair();
+
+        pms[i] = new PageMeta();
+
+        pageIds[i] = 0;
+        //
+        startPoss[i] = numReps[i] = 0;
       }
 
-      void passValue(PageId key,   ArrayList<List<BytesWritable>>  segmentValue2)
+      void passValue(PageId key, ArrayList<List<BytesWritable>> segmentValue2)
           throws IOException {
         int m = 0;
+        // SerializeUtil.writer.beginSegment();
+        // SerializeUtil.writer.beginCluster();
         beginSegment();
         beginCluster();
         for (int i = 0; i < segmentValue2.size(); i++) {
@@ -391,7 +661,7 @@ public class SegmentFile {
             }
             if (m == 0) {
               pm.readFields(in);
-              //       SerializeUtil.writer.addSegmentMeta(i, pm);
+              // SerializeUtil.writer.addSegmentMeta(i, pm);
               addSegmentMeta(i, pm);
               // SerializeUtil.writer.addSegmentMeta(key.getClusterId(), pm);
               m++;
@@ -400,73 +670,667 @@ public class SegmentFile {
               int length = in.readInt();
               in.skip(length);
               pm.readFields(in);
-              //       SerializeUtil.writer.append(bw.getBytes(), Bytes.SIZEOF_INT, length, pm);
+              // SerializeUtil.writer.append(bw.getBytes(), Bytes.SIZEOF_INT, length, pm);
               Segappend(bw.getBytes(), Bytes.SIZEOF_INT, length, pm);
             }
           }
-          //  SerializeUtil.writer.finishCluster();
+          // SerializeUtil.writer.finishCluster();
           finishCluster();
           m = 0;
           if (i < segmentValue2.size() - 1) {
-            //    SerializeUtil.writer.beginCluster();
+            // SerializeUtil.writer.beginCluster();
             beginCluster();
           }
         }
-        //    SerializeUtil.writer.finishSegment();
+        // SerializeUtil.writer.finishSegment();
         finishSegment();
-        //        outputStream.flush();
-        //        outputStream.sync();
-        //        segmentValue2.clear();
-        //        segmentValue2=null ;
+        // outputStream.flush();
+        // outputStream.sync();
+        // segmentValue2.clear();
+        // segmentValue2=null ;
+      }
+      public  void  runLengthEncodingInt(int i){
+        if( pageInit[i]==false){
+          //      TestInStream.OutputCollector collect = new TestInStream.OutputCollector();
+          collect[i] = new TestInStream.OutputCollector();
+          // fixedEncoding=  (FixedLenEncoder)compressors[i]   ;
+          compressors[i].reset();
+          try {
+            runLengthInteger[i] = new RunLengthIntegerWriter(new OutStream("test", 1000, null, collect[i]), true);
+          } catch (IOException e) {
+            e.printStackTrace();
+          }
+          pageInit[i]=true;
+        }
+
+        if(compressors[i].dataOffset + compressors[i].valueLen < compressors[i].pageCapacity){
+          //    if(collect.buffer.size()< fixedEncoding.pageCapacity-12-4){
+          //   rleEncoding.write(Long.parseLong((String)(rows[i].getValue(0))));
+          try {
+            runLengthInteger[i].write(((Integer)(rows[i].getValue(0))).intValue());
+          } catch (IOException e) {
+            e.printStackTrace();
+          }
+          compressors[i].numPairs++;
+          compressors[i].dataOffset += compressors[i].valueLen;
+
+
+
+          if (maxs[i] == null || mins[i] == null) {
+            maxs[i] = rows[i].duplicate();
+            mins[i] = rows[i].duplicate();
+          } else {
+            rows[i].compareAndSetMaxMin(maxs[i], mins[i]);
+          }
+
+          pms[i].numPairs++;
+        }
+        else{
+          try {
+            runLengthInteger[i].write(((Integer)(rows[i].getValue(0))).intValue());
+          } catch (IOException e) {
+            e.printStackTrace();
+          }
+          compressors[i].numPairs++;
+          compressors[i].dataOffset += compressors[i].valueLen;
+
+
+
+          if (maxs[i] == null || mins[i] == null) {
+            maxs[i] = rows[i].duplicate();
+            mins[i] = rows[i].duplicate();
+          } else {
+            rows[i].compareAndSetMaxMin(maxs[i], mins[i]);
+          }
+
+          pms[i].numPairs++;
+          try {
+            runLengthInteger[i].flush();
+          } catch (IOException e) {
+            e.printStackTrace();
+          }
+          ByteBuffer inBuf = ByteBuffer.allocate(collect[i].buffer.size());
+          //         collect.buffer.write(dos, 0, collect.buffer.size());
+          byte[] pageBytes=collect[i].buffer.getByteBuffer(inBuf, 0, collect[i].buffer.size()) ;
+          collect[i].buffer.clear();
+          inBuf.clear();
+
+          vps[i].data=pageBytes ;
+          vps[i].offset = 0;
+          vps[i].length= pageBytes.length;
+          try {
+            compressors[i].appendPage(vps[i]);
+          } catch (IOException e) {
+            e.printStackTrace();
+          }
+
+          try {
+            outputPage(i);
+          } catch (IOException e) {
+            e.printStackTrace();
+          }
+
+          if (maxs[i] == null || mins[i] == null) {
+            maxs[i] = rows[i].duplicate();
+            mins[i] = rows[i].duplicate();
+          } else {
+            rows[i].compareAndSetMaxMin(maxs[i], mins[i]);
+          }
+          LOG.info("dataoffset  "+compressors[i].dataOffset);
+          LOG.info("numPairs  "+compressors[i].numPairs);
+          LOG.info("startPos  "+compressors[i].startPos);
+
+
+          //      pms[i].numPairs++;
+          pageInit[i]=false;
+        }
+
+
+      }
+
+      public  void runLengthEncodingByte(int i){
+        //        TestInStream.OutputCollector collect = new TestInStream.OutputCollector();
+        //        RunLengthByteWriter out = new RunLengthByteWriter(new OutStream("test", 1000, codec, collect));
+
+
+        if( pageInit[i]==false){
+          //      TestInStream.OutputCollector collect = new TestInStream.OutputCollector();
+          collect[i] = new TestInStream.OutputCollector();
+          // fixedEncoding=  (FixedLenEncoder)compressors[i]   ;
+          compressors[i].reset();
+          //     RunLengthByteWriter oust = new RunLengthByteWriter(new OutStream("test", 1000, null, collect[i]));
+          try {
+            runLengthByte[i] = new RunLengthByteWriter(new OutStream("test", 1000, null, collect[i]));
+          } catch (IOException e) {
+            e.printStackTrace();
+          }
+          pageInit[i]=true;
+        }
+
+        if(compressors[i].dataOffset + compressors[i].valueLen < compressors[i].pageCapacity){
+          //    if(collect.buffer.size()< fixedEncoding.pageCapacity-12-4){
+          //   rleEncoding.write(Long.parseLong((String)(rows[i].getValue(0))));
+          try {
+            runLengthByte[i].write(((Byte)(rows[i].getValue(0))).byteValue());
+          } catch (IOException e) {
+            e.printStackTrace();
+          }
+          compressors[i].numPairs++;
+          compressors[i].dataOffset += compressors[i].valueLen;
+
+
+
+          if (maxs[i] == null || mins[i] == null) {
+            maxs[i] = rows[i].duplicate();
+            mins[i] = rows[i].duplicate();
+          } else {
+            rows[i].compareAndSetMaxMin(maxs[i], mins[i]);
+          }
+
+          pms[i].numPairs++;
+        }
+        else{
+          try {
+            runLengthByte[i].write(((Byte)(rows[i].getValue(0))).byteValue());
+          } catch (IOException e) {
+            e.printStackTrace();
+          }
+          compressors[i].numPairs++;
+          compressors[i].dataOffset += compressors[i].valueLen;
+
+
+
+          if (maxs[i] == null || mins[i] == null) {
+            maxs[i] = rows[i].duplicate();
+            mins[i] = rows[i].duplicate();
+          } else {
+            rows[i].compareAndSetMaxMin(maxs[i], mins[i]);
+          }
+
+          pms[i].numPairs++;
+
+          try {
+            runLengthByte[i].flush();
+          } catch (IOException e) {
+            e.printStackTrace();
+          }
+          ByteBuffer inBuf = ByteBuffer.allocate(collect[i].buffer.size());
+          //         collect.buffer.write(dos, 0, collect.buffer.size());
+          byte[] pageBytes=collect[i].buffer.getByteBuffer(inBuf, 0, collect[i].buffer.size()) ;
+
+          collect[i].buffer.clear();
+          inBuf.clear();
+
+          vps[i].data=pageBytes ;
+          vps[i].offset = 0;
+          vps[i].length= pageBytes.length;
+          try {
+            compressors[i].appendPage(vps[i]);
+          } catch (IOException e) {
+            e.printStackTrace();
+          }
+
+          try {
+            outputPage(i);
+          } catch (IOException e) {
+            e.printStackTrace();
+          }
+
+          if (maxs[i] == null || mins[i] == null) {
+            maxs[i] = rows[i].duplicate();
+            mins[i] = rows[i].duplicate();
+          } else {
+            rows[i].compareAndSetMaxMin(maxs[i], mins[i]);
+          }
+          //    pms[i].numPairs++;
+          pageInit[i]=false;
+        }
+
+
+      }
+
+      //
+      //    case  RunLengthEncodingLong: runLengthEncodingLong(i); break ;
+      //    case  DeltaBinaryArrayZigZarByte :deltaBinaryArrayZigZarByte(i); break ;
+      //    case DeltaBinaryBitPackingZigZarInt :deltaBinaryBitPackingZigZarInt(i); break ;
+      //    case DeltaBinaryBitPackingZigZarLong :deltaBinaryBitPackingZigZarLong(i); break ;
+      //    case DictionaryBitPackingRLEByte:dictionaryBitPackingRLEByte(i);break ;
+      //    case DictionaryBitPackingRLEInt:dictionaryBitPackingRLEint(i);break ;
+      //    case DictionaryBitPackingRLELong:dictionaryBitPackingRLELong(i);break ;
+      public  void runLengthEncodingLong(int i) throws UnsupportedEncodingException{
+        throw  new  UnsupportedEncodingException("WangMeng  has  not  implement  this  method   on 03.27.2014  yet");
+      }
+      public  void deltaBinaryArrayZigZarByte(int i) throws IOException{
+        //        DeltaByteArrayWriter  delta=new   DeltaByteArrayWriter((int)file.length()/10);
+        //        for(int i=0; i < fileLong; i++) {
+        //          //  delta.writeBytes(Binary.fromString(""+data[i]));
+        //          //  delta.writeBytes(data[i]);
+        //          delta.writeBytes(Binary.fromString(""+data[i]));
+        //        }
+        //        BytesInput  bi=delta.getBytes();
+
+
+
+        if( pageInit[i]==false){
+          //          int blockSize = 128;
+          //          int miniBlockNum = 4;
+          deltaByteArrayWriter[i]=new DeltaByteArrayWriter( pagesizes[i]/4);
+          // fixedEncoding=  (FixedLenEncoder)compressors[i]   ;
+          compressors[i].reset();
+          pageInit[i]=true;
+        }
+        if(compressors[i].dataOffset + compressors[i].valueLen < compressors[i].pageCapacity){
+          //    if(collect.buffer.size()< fixedEncoding.pageCapacity-12-4){
+          //   rleEncoding.write(Long.parseLong((String)(rows[i].getValue(0))));
+          // deltaBianryBitPackingInt[i].writeInteger(((Byte)(rows[i].getValue(0))).byteValue());
+
+          deltaByteArrayWriter[i].writeBytes(Binary.fromString(""+((Byte)(rows[i].getValue(0))).byteValue()));
+          compressors[i].numPairs++;
+          compressors[i].dataOffset += compressors[i].valueLen;
+          if (maxs[i] == null || mins[i] == null) {
+            maxs[i] = rows[i].duplicate();
+            mins[i] = rows[i].duplicate();
+          } else {
+            rows[i].compareAndSetMaxMin(maxs[i], mins[i]);
+          }
+
+          pms[i].numPairs++;
+        }
+        else{
+          deltaByteArrayWriter[i].writeBytes(Binary.fromString(""+((Byte)(rows[i].getValue(0))).byteValue()));
+          compressors[i].numPairs++;
+          compressors[i].dataOffset += compressors[i].valueLen;
+          if (maxs[i] == null || mins[i] == null) {
+            maxs[i] = rows[i].duplicate();
+            mins[i] = rows[i].duplicate();
+          } else {
+            rows[i].compareAndSetMaxMin(maxs[i], mins[i]);
+          }
+          pms[i].numPairs++;
+          BytesInput  bi=deltaByteArrayWriter[i].getBytes();
+          byte[] pageBytes=bi.getBufferSize() ;
+          vps[i].data=pageBytes ;
+          vps[i].offset = 0;
+          vps[i].length= pageBytes.length;
+          try {
+            compressors[i].appendPage(vps[i]);
+          } catch (IOException e) {
+            e.printStackTrace();
+          }
+
+          try {
+            outputPage(i);
+          } catch (IOException e) {
+            e.printStackTrace();
+          }
+
+          if (maxs[i] == null || mins[i] == null) {
+            maxs[i] = rows[i].duplicate();
+            mins[i] = rows[i].duplicate();
+          } else {
+            rows[i].compareAndSetMaxMin(maxs[i], mins[i]);
+          }
+          LOG.info("dataoffset  "+compressors[i].dataOffset);
+          LOG.info("numPairs  "+compressors[i].numPairs);
+          LOG.info("startPos  "+compressors[i].startPos);
+
+
+          //  pms[i].numPairs++;
+          pageInit[i]=false;
+        }
+      }
+      public  void deltaBinaryBitPackingZigZarInt(int i) throws IOException{
+        // ValuesWriter rle = new RunLengthBitPackingHybridValuesWriter(32, 100);
+        if( pageInit[i]==false){
+          int blockSize = 128;
+          int miniBlockNum = 4;
+          deltaBianryBitPackingInt[i] = new DeltaBinaryPackingValuesWriter(blockSize, miniBlockNum, pagesizes[i]/4);
+          // fixedEncoding=  (FixedLenEncoder)compressors[i]   ;
+          compressors[i].reset();
+          pageInit[i]=true;
+        }
+        if(compressors[i].dataOffset + compressors[i].valueLen < compressors[i].pageCapacity){
+          //    if(collect.buffer.size()< fixedEncoding.pageCapacity-12-4){
+          //   rleEncoding.write(Long.parseLong((String)(rows[i].getValue(0))));
+          deltaBianryBitPackingInt[i].writeInteger(((Integer)(rows[i].getValue(0))).intValue());
+          compressors[i].numPairs++;
+          compressors[i].dataOffset += compressors[i].valueLen;
+          if (maxs[i] == null || mins[i] == null) {
+            maxs[i] = rows[i].duplicate();
+            mins[i] = rows[i].duplicate();
+          } else {
+            rows[i].compareAndSetMaxMin(maxs[i], mins[i]);
+          }
+
+          pms[i].numPairs++;
+        }
+        else{
+          deltaBianryBitPackingInt[i].writeInteger(((Integer)(rows[i].getValue(0))).intValue());
+          compressors[i].numPairs++;
+          compressors[i].dataOffset += compressors[i].valueLen;
+          if (maxs[i] == null || mins[i] == null) {
+            maxs[i] = rows[i].duplicate();
+            mins[i] = rows[i].duplicate();
+          } else {
+            rows[i].compareAndSetMaxMin(maxs[i], mins[i]);
+          }
+          pms[i].numPairs++;
+          BytesInput bi=deltaBianryBitPackingInt[i].getBytes() ;
+          byte[] pageBytes=bi.getBufferSize() ;
+          vps[i].data=pageBytes ;
+          vps[i].offset = 0;
+          vps[i].length= pageBytes.length;
+          try {
+            compressors[i].appendPage(vps[i]);
+          } catch (IOException e) {
+            e.printStackTrace();
+          }
+
+          try {
+            outputPage(i);
+          } catch (IOException e) {
+            e.printStackTrace();
+          }
+
+          if (maxs[i] == null || mins[i] == null) {
+            maxs[i] = rows[i].duplicate();
+            mins[i] = rows[i].duplicate();
+          } else {
+            rows[i].compareAndSetMaxMin(maxs[i], mins[i]);
+          }
+          LOG.info("dataoffset  "+compressors[i].dataOffset);
+          LOG.info("numPairs  "+compressors[i].numPairs);
+          LOG.info("startPos  "+compressors[i].startPos);
+
+
+          //   pms[i].numPairs++;
+          pageInit[i]=false;
+        }
+      }
+      public  void deltaBinaryBitPackingZigZarLong(int i) throws UnsupportedEncodingException{
+        throw new  UnsupportedEncodingException("now I  have  not  implement   this  method   for  twitter.Parquet  do  not  implement  this  just now")  ;
+      }
+
+      //      final OnlyDictionaryValuesWriter.PlainBinaryDictionaryValuesWriter cw = new OnlyDictionaryValuesWriter.PlainBinaryDictionaryValuesWriter(Integer.MAX_VALUE, fileLong);
+      //      for (int i = 0; i < fileLong; i++) {
+      //        cw.writeBytes(Binary.fromString("" +initbytes[i]));
+      //      }
+      //      BytesInput  bi=cw.getBytes() ;
+      //      encodingWriteTime=System.currentTimeMillis() ;
+      //
+      //      long tmp= cw.WriteDictionaryToDisk(s);
+      //      long tmp0=bi.writeToDisk(str);
+      //
+
+
+      public  void dictionaryBitPackingRLEByte(int i) throws IOException{
+        if( pageInit[i]==false){
+          //   deltaBianryBitPackingInt[i] = new DeltaBinaryPackingValuesWriter(blockSize, miniBlockNum, pagesizes[i]/4);
+          dictionaryBitPackingRLEZigZarByte[i]= new PlainBinaryDictionaryValuesWriter(Integer.MAX_VALUE, pagesizes[i]);
+          // fixedEncoding=  (FixedLenEncoder)compressors[i]   ;
+          compressors[i].reset();
+          pageInit[i]=true;
+        }
+        if(compressors[i].dataOffset + compressors[i].valueLen < compressors[i].pageCapacity){
+          //    if(collect.buffer.size()< fixedEncoding.pageCapacity-12-4){
+          //   rleEncoding.write(Long.parseLong((String)(rows[i].getValue(0))));
+          //  dictionaryBitPackingRLEZigZarInt[i].writeInteger(((Byte)(rows[i].getValue(0))).byteValue());
+          dictionaryBitPackingRLEZigZarByte[i].writeBytes(Binary.fromString("" +((Byte)(rows[i].getValue(0))).byteValue()));
+          compressors[i].numPairs++;
+          compressors[i].dataOffset += compressors[i].valueLen;
+          if (maxs[i] == null || mins[i] == null) {
+            maxs[i] = rows[i].duplicate();
+            mins[i] = rows[i].duplicate();
+          } else {
+            rows[i].compareAndSetMaxMin(maxs[i], mins[i]);
+          }
+
+          pms[i].numPairs++;
+        }
+        else{
+          dictionaryBitPackingRLEZigZarByte[i].writeBytes(Binary.fromString("" +((Byte)(rows[i].getValue(0))).byteValue()));
+          compressors[i].numPairs++;
+          compressors[i].dataOffset += compressors[i].valueLen;
+          if (maxs[i] == null || mins[i] == null) {
+            maxs[i] = rows[i].duplicate();
+            mins[i] = rows[i].duplicate();
+          } else {
+            rows[i].compareAndSetMaxMin(maxs[i], mins[i]);
+          }
+          pms[i].numPairs++;
+
+          BytesInput sbi= dictionaryBitPackingRLEZigZarByte[i].getBytes();
+          //  long tmp=cw.WriteDictionaryToDisk(s);
+          byte[]   dictionaryBuffer=dictionaryBitPackingRLEZigZarByte[i].getDictionaryBuffer();
+          //    long tmp1=  sbi.writeToDisk(str);
+          byte[]    dictionaryID=sbi.getBufferSize() ;
+          DataOutputBuffer  dob=new DataOutputBuffer() ;
+          dob.writeInt(dictionaryBuffer.length);
+          dob.write(dictionaryBuffer, 0, dictionaryBuffer.length);
+          dob.write(dictionaryID, 0, dictionaryID.length);
+          byte[] pageBytes=dob.getData() ;
+          dob.close();
+          vps[i].data=pageBytes ;
+          vps[i].offset = 0;
+          vps[i].length= pageBytes.length;
+          try {
+            compressors[i].appendPage(vps[i]);
+          } catch (IOException e) {
+            e.printStackTrace();
+          }
+
+          try {
+            outputPage(i);
+          } catch (IOException e) {
+            e.printStackTrace();
+          }
+
+          if (maxs[i] == null || mins[i] == null) {
+            maxs[i] = rows[i].duplicate();
+            mins[i] = rows[i].duplicate();
+          } else {
+            rows[i].compareAndSetMaxMin(maxs[i], mins[i]);
+          }
+          LOG.info("dataoffset  "+compressors[i].dataOffset);
+          LOG.info("numPairs  "+compressors[i].numPairs);
+          LOG.info("startPos  "+compressors[i].startPos);
+
+
+          //   pms[i].numPairs++;
+          pageInit[i]=false;
+        }
+
+      }
+      public  void dictionaryBitPackingRLEInt(int i) throws IOException{
+
+        if( pageInit[i]==false){
+          //   deltaBianryBitPackingInt[i] = new DeltaBinaryPackingValuesWriter(blockSize, miniBlockNum, pagesizes[i]/4);
+          dictionaryBitPackingRLEZigZarInt[i]= new PlainIntegerDictionaryValuesWriter(Integer.MAX_VALUE, pagesizes[i]);
+          // fixedEncoding=  (FixedLenEncoder)compressors[i]   ;
+          compressors[i].reset();
+          pageInit[i]=true;
+        }
+        if(compressors[i].dataOffset + compressors[i].valueLen < compressors[i].pageCapacity){
+          //    if(collect.buffer.size()< fixedEncoding.pageCapacity-12-4){
+          //   rleEncoding.write(Long.parseLong((String)(rows[i].getValue(0))));
+          dictionaryBitPackingRLEZigZarInt[i].writeInteger(((Integer)(rows[i].getValue(0))).intValue());
+          compressors[i].numPairs++;
+          compressors[i].dataOffset += compressors[i].valueLen;
+          if (maxs[i] == null || mins[i] == null) {
+            maxs[i] = rows[i].duplicate();
+            mins[i] = rows[i].duplicate();
+          } else {
+            rows[i].compareAndSetMaxMin(maxs[i], mins[i]);
+          }
+
+          pms[i].numPairs++;
+        }
+        else{
+          dictionaryBitPackingRLEZigZarInt[i].writeInteger(((Integer)(rows[i].getValue(0))).intValue());
+          compressors[i].numPairs++;
+          compressors[i].dataOffset += compressors[i].valueLen;
+          if (maxs[i] == null || mins[i] == null) {
+            maxs[i] = rows[i].duplicate();
+            mins[i] = rows[i].duplicate();
+          } else {
+            rows[i].compareAndSetMaxMin(maxs[i], mins[i]);
+          }
+          pms[i].numPairs++;
+          BytesInput sbi= dictionaryBitPackingRLEZigZarInt[i].getBytes();
+          //  long tmp=cw.WriteDictionaryToDisk(s);
+          byte[]   dictionaryBuffer=dictionaryBitPackingRLEZigZarInt[i].getDictionaryBuffer();
+          //    long tmp1=  sbi.writeToDisk(str);
+          byte[]    dictionaryID=sbi.getBufferSize() ;
+          DataOutputBuffer  dob=new DataOutputBuffer() ;
+          dob.writeInt(dictionaryBuffer.length);
+          dob.write(dictionaryBuffer, 0, dictionaryBuffer.length);
+          dob.write(dictionaryID, 0, dictionaryID.length);
+          byte[] pageBytes=dob.getData() ;
+          dob.close();
+          vps[i].data=pageBytes ;
+          vps[i].offset = 0;
+          vps[i].length= pageBytes.length;
+          try {
+            compressors[i].appendPage(vps[i]);
+          } catch (IOException e) {
+            e.printStackTrace();
+          }
+
+          try {
+            outputPage(i);
+          } catch (IOException e) {
+            e.printStackTrace();
+          }
+
+          if (maxs[i] == null || mins[i] == null) {
+            maxs[i] = rows[i].duplicate();
+            mins[i] = rows[i].duplicate();
+          } else {
+            rows[i].compareAndSetMaxMin(maxs[i], mins[i]);
+          }
+          LOG.info("dataoffset  "+compressors[i].dataOffset);
+          LOG.info("numPairs  "+compressors[i].numPairs);
+          LOG.info("startPos  "+compressors[i].startPos);
+
+
+          //  pms[i].numPairs++;
+          pageInit[i]=false;
+        }
+
+
+      }
+      public  void dictionaryBitPackingRLELong(int i) throws UnsupportedEncodingException{
+        throw  new  UnsupportedEncodingException("WangMeng  has  not  implement  this  method   on 03.27.2014  yet");
       }
 
       public   void append(Writable val) throws IOException {
         RowMap  rowMap = (RowMap) val;
-        //    if (originalRow == null) {
-        //    }
+
         // System.out.println(originalRow) ;
         for (int i = 0; i < numClusters; i++) {
           rows[i]=rowMap.row[i];
-
-          //        for(int x=0;x<rowMap.row[i].size();x++){
-          //          if(Byte.parseByte(rowMap.row[i].getValue(x).toString())==78){
-          //            Rowmapappendint ++ ;
-          //          }
-          //        }
-          //
-          //      }
-
-          if (codings[i] == CodingType.RLE) {
-            if (prevRows[i] == null) {
-              prevRows[i] = rows[i].duplicate();
-              numReps[i] = 1;
-            } else {
-              if (prevRows[i].compareTo(rows[i]) != 0) {
-                vps[i].data = accessors[i].serialize(prevRows[i], startPoss[i],
-                    numReps[i], tmpLength);
-                vps[i].offset = 0;
-                vps[i].length = tmpLength[0];
-                vps[i].pos = startPoss[i];
-                while (!compressors[i].append(vps[i])) {
-                  outputPage(i);
-                }
-                // update page meta
-                if (maxs[i] == null || mins[i] == null) {
-                  maxs[i] = prevRows[i].duplicate();
-                  mins[i] = prevRows[i].duplicate();
-                } else {
-                  prevRows[i].compareAndSetMaxMin(maxs[i], mins[i]);
-                }
-
-                prevRows[i].copy(rows[i]);
-                startPoss[i] += numReps[i];
-                pms[i].numPairs += numReps[i];
-                numReps[i] = 1;
-              } else {
-                numReps[i]++;
-              }
+          if(codings[i]!=CodingType.MV){
+            switch   (codings[i]){
+            case  RunLengthEncodingByte: runLengthEncodingByte(i); break ;
+            case  RunLengthEncodingInt: runLengthEncodingInt(i); break ;
+            case  RunLengthEncodingLong: runLengthEncodingLong(i); break ;
+            case  DeltaBinaryArrayZigZarByte :deltaBinaryArrayZigZarByte(i); break ;
+            case DeltaBinaryBitPackingZigZarInt :deltaBinaryBitPackingZigZarInt(i); break ;
+            case DeltaBinaryBitPackingZigZarLong :deltaBinaryBitPackingZigZarLong(i); break ;
+            case DictionaryBitPackingRLEByte:dictionaryBitPackingRLEByte(i);break ;
+            case DictionaryBitPackingRLEInt:dictionaryBitPackingRLEInt(i);break ;
+            case DictionaryBitPackingRLELong:dictionaryBitPackingRLELong(i);break ;
+            default :  throw  new  UnsupportedEncodingException()  ;
             }
-          } else { // if (codings[i] == CodingType.MV)
+
+
+            //            if (codings[i] == CodingType.RunLengthEncodingInt) {
+            //
+            //              if( pageInit[i]==false){
+            //                //      TestInStream.OutputCollector collect = new TestInStream.OutputCollector();
+            //                collect[i] = new TestInStream.OutputCollector();
+            //                // fixedEncoding=  (FixedLenEncoder)compressors[i]   ;
+            //                compressors[i].reset();
+            //                rleEncoding[i] = new RunLengthIntegerWriter(new OutStream("test", 1000, null, collect[i]), true);
+            //                pageInit[i]=true;
+            //              }
+            //
+            //              if(compressors[i].dataOffset + compressors[i].valueLen < compressors[i].pageCapacity){
+            //                //    if(collect.buffer.size()< fixedEncoding.pageCapacity-12-4){
+            //                //   rleEncoding.write(Long.parseLong((String)(rows[i].getValue(0))));
+            //                rleEncoding[i].write(((Integer)(rows[i].getValue(0))).intValue());
+            //                compressors[i].numPairs++;
+            //                compressors[i].dataOffset += compressors[i].valueLen;
+            //
+            //
+            //
+            //                if (maxs[i] == null || mins[i] == null) {
+            //                  maxs[i] = rows[i].duplicate();
+            //                  mins[i] = rows[i].duplicate();
+            //                } else {
+            //                  rows[i].compareAndSetMaxMin(maxs[i], mins[i]);
+            //                }
+            //
+            //                pms[i].numPairs++;
+            //              }
+            //              else{
+            //                rleEncoding[i].write(((Integer)(rows[i].getValue(0))).intValue());
+            //                compressors[i].numPairs++;
+            //                compressors[i].dataOffset += compressors[i].valueLen;
+            //
+            //
+            //
+            //                if (maxs[i] == null || mins[i] == null) {
+            //                  maxs[i] = rows[i].duplicate();
+            //                  mins[i] = rows[i].duplicate();
+            //                } else {
+            //                  rows[i].compareAndSetMaxMin(maxs[i], mins[i]);
+            //                }
+            //
+            //                pms[i].numPairs++;
+            //                System.out.println("dataoffset  "+compressors[i].dataOffset);
+            //                System.out.println("585 numPairs  "+compressors[i] .numPairs);
+            //                System.out.println("startPos  "+compressors[i] .startPos);
+            //                System.out.println("547 collect.buffer.size()  "+collect[i].buffer.size() );
+            //                System.out.println("547  fixedEncoding.dataOffset  "+compressors[i].dataOffset );
+            //                System.out.println("547 fixedEncoding.valueLen       "+compressors[i].valueLen );
+            //                System.out.println("547 fixedEncoding.pageCapacity    "+compressors[i].pageCapacity );
+            //                rleEncoding[i].flush();
+            //                ByteBuffer inBuf = ByteBuffer.allocate(collect[i].buffer.size());
+            //                //         collect.buffer.write(dos, 0, collect.buffer.size());
+            //                byte[] pageBytes=collect[i].buffer.getByteBuffer(inBuf, 0, collect[i].buffer.size()) ;
+            //                LOG.info("rlecodingSize "+pageBytes.length);
+            //                System.out.println("rlecodingSize "+pageBytes.length);
+            //                collect[i].buffer.clear();
+            //                inBuf.clear();
+            //
+            //                vps[i].data=pageBytes ;
+            //                vps[i].offset = 0;
+            //                vps[i].length= pageBytes.length;
+            //                compressors[i].appendPage(vps[i]);
+            //
+            //                outputPage(i);
+            //
+            //                if (maxs[i] == null || mins[i] == null) {
+            //                  maxs[i] = rows[i].duplicate();
+            //                  mins[i] = rows[i].duplicate();
+            //                } else {
+            //                  rows[i].compareAndSetMaxMin(maxs[i], mins[i]);
+            //                }
+            //                LOG.info("dataoffset  "+compressors[i].dataOffset);
+            //                LOG.info("numPairs  "+compressors[i].numPairs);
+            //                LOG.info("startPos  "+compressors[i].startPos);
+            //
+            //
+            //                pms[i].numPairs++;
+            //                pageInit[i]=false;
+            //              }
+            //
+            //            }
+            //////////////////////////////////////////////////////////////////////////////////
+
+          }
+          else { // if (codings[i] == CodingType.MV)
             // try to write the current row
             vps[i].data = accessors[i].serialize(rows[i], tmpLength);
             vps[i].offset = 0;
@@ -488,33 +1352,28 @@ public class SegmentFile {
           // ///very important ,jude whether write to disk or not
           //   if (i == (numClusters - 1) && (sgementSize> (536870912-numClusters*131072)) ) {
           if ((sgementSize>SegmentSize) && i == (numClusters - 1)  ) {
-            // long count = 0;
-            //        count=0;
-            //        for (int w = 0; w < numClusters; w++) {
-            //          count = count + compressors[w].getPageLen();
-            //        }
+
             SegmentMeta();
 
             passValue(segId, clusterValue);
+            //   System.out.println("504  "+ outputStream.getPos());
+            outputStream.flush();
 
-            for (int k = 0; k < numClusters; k++) {
-              pageIds[k] = 0;
-              pms[k].startPos = 0;
-              pms[k].numPairs = 0;
-              maxs[k] = mins[k] = null;
-            }
             segId = new PageId();
-            segId.setSegmentId(Math.random() * 100 + "");
-            for(int l=0 ;l< clusterValue.size();l++){
-              //          for(int j=0;j<clusterValue.get(i).size();j++){
-              //            clusterValue.get(i).get(j).
-              //          }
-              clusterValue.get(l).clear();
-            }
+            //  segId.setSegmentId(Math.random() * 100 + "");
+            pageIdCount++ ;
+            segId.setSegmentId(""+ pageIdCount);
+            //            for(int l=0 ;l< clusterValue.size();l++){
+            //              //          for(int j=0;j<clusterValue.get(i).size();j++){
+            //              //            clusterValue.get(i).get(j).
+            //              //          }
+            //              clusterValue.get(l).clear();
+            //            }
 
-            clusterValue.clear();
+            //      clusterValue.clear();
             //   segmentValue.clear();
             sgementSize = 0;
+            isInit=false ;
             //  }
           }
 
@@ -527,10 +1386,10 @@ public class SegmentFile {
 
       void close() throws IOException {
         SegmentMeta();
-        //        for (int l = 0; l < numClusters; l++) {
-        //          segmentValue.put(l, clusterValue.get(l));
+        // for (int l = 0; l < numClusters; l++) {
+        // segmentValue.put(l, clusterValue.get(l));
         //
-        //        }
+        // }
         passValue(segId, clusterValue);
         for (int k = 0; k < numClusters; k++) {
           pageIds[k] = 0;
@@ -541,7 +1400,7 @@ public class SegmentFile {
         segId = new PageId();
         segId.setSegmentId(Math.random() * 100 + "");
         clusterValue.clear();
-        //   segmentValue.clear();
+        // segmentValue.clear();
         sgementSize = 0;
       }
     }
@@ -587,9 +1446,10 @@ public class SegmentFile {
      * @param columns
      * @throws IOException
      */
-    public Writer(FileSystem fs, Path tmpPath, Path path,Path tmpoutputPath,List<List<DataType>> columns)
-        throws IOException {
-      this(fs, tmpPath, path,tmpoutputPath,columns, true);
+    public Writer(FileSystem fs, Path tmpPath, Path path, Path tmpoutputPath,
+        List<List<DataType>> columns)
+            throws IOException {
+      this(fs, tmpPath, path, tmpoutputPath, columns, true);
     }
 
     /**
@@ -601,17 +1461,19 @@ public class SegmentFile {
      * @param withPageMeta
      * @throws IOException
      */
-    public Writer(FileSystem fs, Path tmpPath,Path path, Path finalOutPath ,List<List<DataType>> columns,
+    public Writer(FileSystem fs, Path tmpPath, Path path, Path finalOutPath,
+        List<List<DataType>> columns,
         boolean withPageMeta)
             throws IOException {
-      this(fs.create(tmpPath,true, fs.getConf().getInt("io.file.buffer.size", 4096),fs.getDefaultReplication(),  fs.getDefaultBlockSize()), columns, withPageMeta);
+      this(fs.create(tmpPath, true, fs.getConf().getInt("io.file.buffer.size", 4096),
+          fs.getDefaultReplication(), fs.getDefaultBlockSize()), columns, withPageMeta);
       fs.setVerifyChecksum(true);
       closeOutputStream = true;
       name = path.toString();
       this.path = path;
-      this.tmpPath=tmpPath ;
-      this.fs=fs ;
-      this.tmpoutputPath=tmpoutputPath;
+      this.tmpPath = tmpPath;
+      this.fs = fs;
+      this.tmpoutputPath = tmpoutputPath;
     }
 
     /**
@@ -627,17 +1489,18 @@ public class SegmentFile {
         boolean withPageMeta)
             throws IOException {
       // LOG.debug("create a writer...");
-      outputStream = ostream;
-      closeOutputStream = false;
-      name = outputStream.toString();
+      this.outputStream = ostream;
+      this.closeOutputStream = false;
+      this.name = this.outputStream.toString();
       this.withPageMeta = withPageMeta;
       init(columns);
     }
 
-    private  void init(List<List<DataType>> columns) {
+    private void init(List<List<DataType>> columns) {
       if (columns != null) {
         numClusters = columns.size();
         // LOG.debug("Init " + numClusters + " clusters.");
+
         pms = new PageMetaSection(withPageMeta);
         pageMetaLists = new PageMetaList[numClusters];
         for (int i = 0; i < numClusters; i++) {
@@ -645,8 +1508,10 @@ public class SegmentFile {
           pageMetaLists[i].setMetaList(new ArrayList<PageMeta>(),
               new ArrayList<Long>());
         }
+
         clusterOffsetInCurSegment = new long[numClusters];
       }
+
       curSegIdx = 0;
     }
 
@@ -661,7 +1526,7 @@ public class SegmentFile {
       }
     }
 
-    private  void resetPageMetaSection() {
+    private void resetPageMetaSection() {
       for (PageMetaList pageMetaList : pageMetaLists) {
         pageMetaList.getMetaList().clear();
         pageMetaList.getOffsetList().clear();
@@ -672,7 +1537,7 @@ public class SegmentFile {
       curSegMetas[clusterId] = pm;
     }
 
-    public   void beginSegment() throws IOException {
+    public void beginSegment() throws IOException {
       LOG.info("Begin a new Segment from position " + outputStream.getPos());
 
       // And the segment start offset;
@@ -701,7 +1566,7 @@ public class SegmentFile {
 
       // record the length of the segment
       long length = outputStream.getPos() - segOffsets.get(curSegIdx);
-      LOG.info("This segment's length is " + length);
+      LOG.info("This segment  length is " + length);
       segLengths.add(length);
 
       if (withPageMeta) {
@@ -709,37 +1574,44 @@ public class SegmentFile {
         curSegMetas = null;
       }
       resetPageMetaSection();
+      pageMetaLists = new PageMetaList[numClusters];
+      for (int i = 0; i < numClusters; i++) {
+        pageMetaLists[i] = new PageMetaList(withPageMeta);
+        pageMetaLists[i].setMetaList(new ArrayList<PageMeta>(),
+            new ArrayList<Long>());
+      }
+
+
       curSegIdx++;
     }
-
     /**
      * @return Path or null if we were passed a stream rather than a Path.
      */
-    public   Path getPath() {
-      return path;
+    public Path getPath() {
+      return this.path;
     }
 
     @Override
     public String toString() {
-      return "writer=" + name;
+      return "writer=" + this.name;
     }
 
-    public  void beginCluster() throws IOException {
+    public void beginCluster() throws IOException {
       LOG.info("Begin a new Cluster from position " + outputStream.getPos());
 
-      curPageMetaList = pageMetaLists[curClusterIdx].getMetaList();
-      curPMOffsetList = pageMetaLists[curClusterIdx].getOffsetList();
+      curPageMetaList = this.pageMetaLists[curClusterIdx].getMetaList();
+      curPMOffsetList = this.pageMetaLists[curClusterIdx].getOffsetList();
 
-      clusterOffsetInCurSegment[curClusterIdx] = outputStream.getPos();
+      this.clusterOffsetInCurSegment[curClusterIdx] = outputStream.getPos();
     }
 
-    public   void finishCluster() {
+    public void finishCluster() {
       LOG.info("Finish Cluster " + curClusterIdx + ".");
       LOG.info("Finish a Cluster while writing " + curPageMetaList.size() + " pages.");
       curClusterIdx++;
     }
 
-    public  void Segappend(final byte[] page, final int offset,
+    public void Segappend(final byte[] page, final int offset,
         final int length, final PageMeta pm) throws IOException {
       curPMOffsetList.add(outputStream.getPos());
       outputStream.write(page, offset, length);
@@ -747,12 +1619,13 @@ public class SegmentFile {
     }
 
 
-    public  void fileClose() throws IOException {
-      //      outputStream.flush();
-      //      outputStream.sync();
+    public void fileClose() throws IOException {
+      // outputStream.flush();
+      // outputStream.sync();
       if (outputStream == null) {
         return;
       }
+
       LOG.info("Finish the segment file by writing its segments' index at position "
           + outputStream.getPos() + " .");
       LOG.info("Total segments are " + curSegIdx);
@@ -775,32 +1648,33 @@ public class SegmentFile {
       outputStream.writeInt(numClusters);
       outputStream.writeInt(curSegIdx);
       outputStream.writeLong(segIdxOffset);
+
       LOG.info("Finished @ position " + outputStream.getPos());
       // if (this.closeOutputStream) {
-      //      LOG.info("fs.size"+fs.getLength(path));
-      //      LOG.info("fs.name"+fs.getName());
-      //      LOG.info("fs.backup"+fs.getReplication(path));
-      //      LOG.info("fs.status"+fs.getFileStatus(path));
-      //     // LOG.info(""+fs.setVerifyChecksum(verifyChecksum););
-      //      fs.setVerifyChecksum(true);
-      //      fs.printStatistics();
+      // LOG.info("fs.size"+fs.getLength(path));
+      // LOG.info("fs.name"+fs.getName());
+      // LOG.info("fs.backup"+fs.getReplication(path));
+      // LOG.info("fs.status"+fs.getFileStatus(path));
+      // // LOG.info(""+fs.setVerifyChecksum(verifyChecksum););
+      // fs.setVerifyChecksum(true);
+      // fs.printStatistics();
       outputStream.close();
-      //      LOG.info("fs.size"+fs.getLength(path));
-      //      LOG.info("fs.name"+fs.getName());
-      //      LOG.info("fs.backup"+fs.getReplication(path));
-      //      LOG.info("fs.status"+fs.getFileStatus(path));
+      // LOG.info("fs.size"+fs.getLength(path));
+      // LOG.info("fs.name"+fs.getName());
+      // LOG.info("fs.backup"+fs.getReplication(path));
+      // LOG.info("fs.status"+fs.getFileStatus(path));
       outputStream = null;
-      //   DistributedFileSystem dfs=(DistributedFileSystem)fs ;
-      if(fs.exists(path)){
-        fs.delete(path,true);
+      // DistributedFileSystem dfs=(DistributedFileSystem)fs ;
+      if (fs.exists(path)) {
+        fs.delete(path, true);
       }
-      fs.rename(tmpPath,path);
-      //  fs.create(path);
-      //    dfs.moveToLocalFile(tmpPath,finalOutPath);
+      fs.rename(tmpPath, path);
+      // fs.create(path);
+      // dfs.moveToLocalFile(tmpPath,finalOutPath);
       fs.delete(tmpPath, true);
-      //    fs.delete(tmpoutputPath, true);
+      // fs.delete(tmpoutputPath, true);
 
-      //  fs.MoveTask
+      // fs.MoveTask
     }
 
     @Override
@@ -812,12 +1686,12 @@ public class SegmentFile {
   }
 
   public static class SegmentIndexRef {
-    private int numSegs;
-    private int numClusters;
-    private  long[] segOffsets;
-    private long[] segPMSOffsets;
-    private  long[] segLengths;
-    private  PageMeta[][] segMetas;
+    public int numSegs;
+    public int numClusters;
+    public long[] segOffsets;
+    public long[] segPMSOffsets;
+    public long[] segLengths;
+    public PageMeta[][] segMetas;
   }
 
   /**
@@ -825,9 +1699,9 @@ public class SegmentFile {
    */
   public static class SegmentIndexReader implements Closeable {
 
-    private long segIndexOffset;
+    long segIndexOffset;
 
-    private final SegmentIndexRef ref = new SegmentIndexRef();
+    SegmentIndexRef ref = new SegmentIndexRef();
 
     // Stream to read from
     private FSDataInputStream istream = null;
@@ -848,7 +1722,7 @@ public class SegmentFile {
           + " , with page meta : " + withPageMeta);
     }
 
-    public synchronized  void readSegIndex() throws IOException {
+    public synchronized void readSegIndex() throws IOException {
       istream.seek(fileSize - 2 * Bytes.SIZEOF_INT - Bytes.SIZEOF_LONG);
       ref.numClusters = istream.readInt();
       ref.numSegs = istream.readInt();
@@ -878,27 +1752,27 @@ public class SegmentFile {
       }
     }
 
-    public  synchronized  long[] getSegOffsets() {
+    public synchronized long[] getSegOffsets() {
       return ref.segOffsets;
     }
 
-    public  synchronized  long[] getSegPMSOffsets() {
+    public synchronized long[] getSegPMSOffsets() {
       return ref.segPMSOffsets;
     }
 
-    public  synchronized  long[] getSegLengths() {
+    public synchronized long[] getSegLengths() {
       return ref.segLengths;
     }
 
-    public  synchronized PageMeta[][] getSegMetas() {
+    public synchronized PageMeta[][] getSegMetas() {
       return ref.segMetas;
     }
 
-    public  synchronized int getNumSegs() {
+    public synchronized int getNumSegs() {
       return ref.numSegs;
     }
 
-    public  synchronized  SegmentIndexRef getRef() {
+    public synchronized SegmentIndexRef getRef() {
       return ref;
     }
 
@@ -976,35 +1850,35 @@ public class SegmentFile {
     private final FSDataInputStream istream;
 
     // read in the page meta section
-     public  PageMetaSection pms = null;
+    PageMetaSection pms = null;
 
     // Segment information
-    private final long segmentOffset;
-    private final  long segmentLength;
-    private final  long segmentPMSOffset;
+    long segmentOffset;
+    long segmentLength;
+    long segmentPMSOffset;
 
     // Number of Clusters
-    private int numClusters;
-    private long[] clusterOffsets;
+    int numClusters;
+    long[] clusterOffsets;
 
     // Cache Pool
     // pcp just used in m/r mode
-    private  PageCache[] pcp;
+    PageCache[] pcp;
     // pagecache used in POINTQUERY mode
-    private  BlockCache pagecache;
+    BlockCache pagecache;
 
     // Statistics of Cache Pool
-    private  int pageLoads;
-    private  int cacheHits;
+    int pageLoads;
+    int cacheHits;
 
-    private  Map<Integer, ScanMode[]> scanMap = null;
+    Map<Integer, ScanMode[]> scanMap = null;
 
-    private  Reporter reporter = null;
+    Reporter reporter = null;
 
-    private final  boolean withPageMeta;
+    boolean withPageMeta;
 
-    private final READMODE mode;
-    private final int segId;
+    READMODE mode;
+    int segId;
 
     /**
      * Create the Segment Reader.
@@ -1078,7 +1952,7 @@ public class SegmentFile {
      * @param reporter
      *          the M/R reporter
      */
-    public  synchronized  void initReporter(Reporter reporter) {
+    public synchronized void initReporter(Reporter reporter) {
       this.reporter = reporter;
     }
 
@@ -1088,7 +1962,7 @@ public class SegmentFile {
      *
      * @throws IOException
      */
-    public  synchronized  void loadPMS() throws IOException {
+    public synchronized void loadPMS() throws IOException {
       // move to the offset of page meta section
       istream.seek(segmentPMSOffset);
       pms = new PageMetaSection(withPageMeta);
@@ -1115,7 +1989,7 @@ public class SegmentFile {
       }
     }
 
-    public  synchronized  void buildScanMap(ExprDesc expr, ClusterAccessor[] accessors) {
+    public synchronized void buildScanMap(ExprDesc expr, ClusterAccessor[] accessors) {
       if (pms == null) {
         return;
       }
@@ -1128,7 +2002,7 @@ public class SegmentFile {
      * Clear the scan map of the last query. So the segment reader can be re-used
      * in the following query processing.
      */
-    public  synchronized  void clearScanMap() {
+    public synchronized void clearScanMap() {
       scanMap = null;
     }
 
@@ -1141,7 +2015,7 @@ public class SegmentFile {
      *          do we need to cache the page in the buffer
      * @return cluster reader
      */
-    public  synchronized  ClusterReader newClusterReader(int clusterId, boolean cachePage) {
+    public synchronized ClusterReader newClusterReader(int clusterId, boolean cachePage) {
       long clusterLength;
       if (clusterId == numClusters - 1) {
         clusterLength = segmentPMSOffset - clusterOffsets[clusterId];
@@ -1163,7 +2037,27 @@ public class SegmentFile {
      * @param position
      * @return
      */
-    public  synchronized  ByteBuffer readPage(int clusterId, int position, boolean cachePage)
+
+    //    DynamicByteArray  dynamicBuffer = new DynamicByteArray();
+    //    dynamicBuffer.add(bytes, 0, bytes.length);
+    //
+    //    ByteBuffer inBuf = ByteBuffer.allocate(dynamicBuffer.size());
+    //    //  System.out.println("56  "+inBuf.getInt());
+    //    dynamicBuffer.setByteBuffer(inBuf, 0, dynamicBuffer.size());
+    //
+    //    inBuf.flip();
+    //
+    //    RunLengthIntegerReader in = new RunLengthIntegerReader(InStream.create
+    //        ("test", inBuf, codec, (int)readfile.length()), true);
+    //    //  int  count=0 ;
+    //    int[]  result=new  int[fileLong] ;
+    //    for(int i=0; i < fileLong; ++i) {
+    //
+    //      result[i]= (int) in.next();
+    //      count ++ ;
+    //    }
+    ////    inBuf.clear();
+    public synchronized ByteBuffer readPage(int clusterId, int position, boolean cachePage)
         throws IOException {
       PageMetaList pmList = pms.getPageMetaLists()[clusterId];
       int pageId = Utils.findTargetPos(pmList.getMetaList(), 0, pmList.getMetaList().size() - 1,
@@ -1199,7 +2093,7 @@ public class SegmentFile {
      * @return Block wrapped in a ByteBuffer.
      * @throws IOException
      */
-    synchronized  ByteBuffer readPage(int clusterId, int pageId, long offset, long length,
+    synchronized ByteBuffer readPage(int clusterId, int pageId, long offset, long length,
         boolean cachePage)
             throws IOException {
       pageLoads++;
@@ -1239,14 +2133,14 @@ public class SegmentFile {
         }
       }
 
-      ByteBuffer buf = ByteBuffer.allocate(longToInt(length));
-      istream.readFully(offset, buf.array());
+      // ByteBuffer buf = ByteBuffer.allocate(longToInt(length));
+      // istream.readFully(offset, buf.array());
 
       // Read the page from filesystem
-      //      InputStream is = new BoundedRangeFileInputStream(istream, offset, length);
-      //      ByteBuffer buf = ByteBuffer.allocate(longToInt(length));
-      //      IOUtils.readFully(is, buf.array(), 0, buf.capacity());
-      //      is.close();
+      InputStream is = new BoundedRangeFileInputStream(istream, offset, length);
+      ByteBuffer buf = ByteBuffer.allocate(longToInt(length));
+      IOUtils.readFully(is, buf.array(), 0, buf.capacity());
+      is.close();
 
       if (cachePage) {
         if (mode == READMODE.MR) {
@@ -1260,7 +2154,7 @@ public class SegmentFile {
 
 
     @Override
-    public  synchronized  void close() throws IOException {
+    public synchronized void close() throws IOException {
       if (istream != null) {
         istream.close();
       }
@@ -1284,12 +2178,12 @@ public class SegmentFile {
     private final ScanMode[] scanmode;
     private boolean cachePage;
 
-    private int curPageId;
-    private final  int numPages;
+    int curPageId;
+    int numPages;
 
-    private final PosRLEChunk prb = new PosRLEChunk();
+    PosRLEChunk prb = new PosRLEChunk();
 
-    private  Reporter reporter = null;
+    Reporter reporter = null;
 
     /**
      * ClusterReader Constructor
@@ -1326,23 +2220,23 @@ public class SegmentFile {
       curPageId = 0;
     }
 
-    public  synchronized  void setCachePage(boolean cachePage_) {
+    public synchronized void setCachePage(boolean cachePage_) {
       this.cachePage = cachePage_;
     }
 
-    public  synchronized void initReporter(Reporter reporter) {
+    public synchronized void initReporter(Reporter reporter) {
       this.reporter = reporter;
     }
 
-    public  synchronized  int getNumPages() {
+    public synchronized int getNumPages() {
       return numPages;
     }
 
-    public  synchronized int getCurPageId() {
+    public synchronized int getCurPageId() {
       return curPageId;
     }
 
-    public synchronized  boolean isPageCached() {
+    public synchronized boolean isPageCached() {
       return cachePage;
     }
 
@@ -1352,14 +2246,19 @@ public class SegmentFile {
      * @return the next page data
      * @throws IOException
      */
-    public  synchronized  byte[] nextPage() throws IOException {
+    public synchronized byte[] nextPage() throws IOException {
       if (curPageId < numPages) {
         long offset = poList.get(curPageId);
         long length = curPageId == numPages - 1 ? clusterOffset + clusterLength - offset :
           poList.get(curPageId + 1) - offset;
         // System.out.println("reade Page " + curPageId + " offset " + offset + " length " +
         // length);
+
+        //  LOG.info("1567   byte[] nextPage()  length  "+length+"   clusterId  "+clusterId+"  curPageId  "+curPageId+"  offset  "+offset);
+        //        System.out.println("1567   byte[] nextPage()  length  "+length+"   clusterId  "+clusterId+"  curPageId  "+curPageId+"  offset  "+offset);
         byte[] page = sr.readPage(clusterId, curPageId, offset, length, cachePage).array();
+        //   LOG.info("1567   byte[] nextPage()  pageLength   "+page.length);
+        //   System.out.println("1567   byte[] nextPage()  pageLength   "+page.length);
         curPageId++;
         return page;
       } else {
@@ -1374,8 +2273,7 @@ public class SegmentFile {
      * @throws IOException
      */
     @Deprecated
-    public  synchronized  byte[] nextPage(Predicate predicate) throws IOException {
-      // TODO: do we need this method?
+    public synchronized byte[] nextPage(Predicate predicate) throws IOException {
       return null;
     }
 
@@ -1388,7 +2286,7 @@ public class SegmentFile {
      * @return the page data
      * @throws IOException
      */
-    public  synchronized   byte[] skipToPosAndGetPage(int pos) throws IOException {
+    public synchronized byte[] skipToPosAndGetPage(int pos) throws IOException {
       // System.err.println("[SegmentFile]skipToPosAndGetPage : skip to pos " + pos +
       // " to read a page.");
 
@@ -1417,7 +2315,7 @@ public class SegmentFile {
      *
      * @return last position
      */
-    public  synchronized  int getLastPos() {
+    public synchronized int getLastPos() {
       PageMeta pm = pmList.get(numPages - 1);
       return pm.startPos + pm.numPairs - 1;
     }
@@ -1440,7 +2338,7 @@ public class SegmentFile {
      * @return the reference to the page
      * @throws IOException
      */
-    public  synchronized  byte[] nextPredicatePagePos(ScanMode[] modes, PosChunk[] blks)
+    public synchronized byte[] nextPredicatePagePos(ScanMode[] modes, PosChunk[] blks)
         throws IOException {
       if (scanmode == null) {
         modes[0] = ScanMode.Rough;
@@ -1487,9 +2385,7 @@ public class SegmentFile {
           int numPairs = pm.numPairs;
           // System.err.println("Read page " + curPageId + " : start from " + startPos + ", numReps"
           // + numPairs);
-          // TODO: Do we need to read a page actually?
           page = nextPage();
-
           while (curPageId < numPages &&
               scanmode[curPageId] == ScanMode.Positive) {
             pm = pmList.get(curPageId);
@@ -1518,10 +2414,9 @@ public class SegmentFile {
      * @return the next page data
      * @throws IOException
      */
-    public  synchronized  byte[] nextPredicatePageValue(ScanMode[] modes) throws IOException {
+    public synchronized byte[] nextPredicatePageValue(ScanMode[] modes) throws IOException {
       if (scanmode == null) {
         modes[0] = ScanMode.Rough;
-        // System.out.println("scanmodes is null, read in a rough page.");
         return nextPage();
       }
 
@@ -1543,7 +2438,6 @@ public class SegmentFile {
 
       if (curPageId < numPages) {
         modes[0] = scanmode[curPageId];
-        // System.out.println("scanmodes is not null, read in a page : " + scanmode[curPageId]);
         page = nextPage();
       }
       return page;
@@ -1557,7 +2451,7 @@ public class SegmentFile {
    *
    * @return <code>l</code> cast as an int.
    */
-  static  synchronized int longToInt(final long l) {
+  static synchronized int longToInt(final long l) {
     // Expecting the size() of a block not exceeding 4GB. Assuming the
     // size() will wrap to negative integer if it exceeds 2GB (From tfile).
     return (int) (l & 0x00000000ffffffffL);
@@ -1595,10 +2489,9 @@ public class SegmentFile {
     return globalPageCache;
   }
 
-  static  synchronized  String makePageName(int segId, int clusterId, int pageId) {
+  static synchronized String makePageName(int segId, int clusterId, int pageId) {
     StringBuilder sb = new StringBuilder();
     sb.append(segId).append('-').append(clusterId).append('-').append(pageId);
     return sb.toString();
   }
 }
-
