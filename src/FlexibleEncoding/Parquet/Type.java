@@ -1,0 +1,210 @@
+package FlexibleEncoding.Parquet;
+/*
+ * adapted  from Parquet*
+ */
+import java.util.List;
+
+
+
+/**
+ * Represents the declared type for a field in a schema.
+ * The Type object represents both the actual underlying type of the object
+ * (eg a primitive or group) as well as its attributes such as whether it is
+ * repeated, required, or optional.
+ */
+abstract public class Type {
+
+  /**
+   * Constraint on the repetition of a field
+   *
+   * @author Julien Le Dem
+   */
+  public static enum Repetition {
+    /**
+     * exactly 1
+     */
+    REQUIRED {
+      @Override
+      public boolean isMoreRestrictiveThan(Repetition other) {
+        return other != REQUIRED;
+      }
+    },
+    /**
+     * 0 or 1
+     */
+    OPTIONAL {
+      @Override
+      public boolean isMoreRestrictiveThan(Repetition other) {
+        return other == REPEATED;
+      }
+    },
+    /**
+     * 0 or more
+     */
+    REPEATED {
+      @Override
+      public boolean isMoreRestrictiveThan(Repetition other) {
+        return false;
+      }
+    }
+    ;
+
+    /**
+     * @param other
+     * @return true if it is strictly more restrictive than other
+     */
+    abstract public boolean isMoreRestrictiveThan(Repetition other);
+
+  }
+
+  private final String name;
+  private final Repetition repetition;
+  private final OriginalType originalType;
+
+  /**
+   * @param name the name of the type
+   * @param repetition OPTIONAL, REPEATED, REQUIRED
+   */
+  public Type(String name, Repetition repetition) {
+    this(name, repetition, null);
+  }
+
+  /**
+   * @param name the name of the type
+   * @param repetition OPTIONAL, REPEATED, REQUIRED
+   * @param originalType (optional) the original type to help with cross schema convertion (LIST, MAP, ...)
+   */
+  public Type(String name, Repetition repetition, OriginalType originalType) {
+    super();
+    this.name = name;
+    this.repetition = repetition;
+    this.originalType = originalType;
+  }
+
+  /**
+   * @return the name of the type
+   */
+  public String getName() {
+    return name;
+  }
+
+  /**
+   * @param rep
+   * @return if repretition of the type is rep
+   */
+  public boolean isRepetition(Repetition rep) {
+    return repetition == rep;
+  }
+
+  /**
+   * @return the repetition constraint
+   */
+  public Repetition getRepetition() {
+    return repetition;
+  }
+
+  /**
+   * @return the original type (LIST, MAP, ...)
+   */
+  public OriginalType getOriginalType() {
+    return originalType;
+  }
+
+  /**
+   * @return if this is a primitive type
+   */
+  abstract public boolean isPrimitive();
+
+  /**
+   * @return this if it's a group type
+   * @throws ClassCastException if not
+   */
+//  public GroupType asGroupType() {
+//    if (isPrimitive()) {
+//      throw new ClassCastException(this + " is not a group");
+//    }
+//    return (GroupType)this;
+//  }
+
+  /**
+   * @return this if it's a primitive type
+   * @throws ClassCastException if not
+   */
+  public PrimitiveType asPrimitiveType() {
+    if (!isPrimitive()) {
+      throw new ClassCastException(this + " is not a primititve");
+    }
+    return (PrimitiveType)this;
+  }
+
+  /**
+   * Writes a string representation to the provided StringBuilder
+   * @param sb the StringBuilder to write itself to
+   * @param current indentation level
+   */
+  abstract public void writeToStringBuilder(StringBuilder sb, String indent);
+
+  /**
+   * Visits this type with the given visitor
+   * @param visitor the visitor to visit this type
+   */
+  abstract public void accept(TypeVisitor visitor);
+
+  @Override
+  public int hashCode() {
+    return typeHashCode();
+  }
+
+  protected abstract int typeHashCode();
+
+  protected abstract boolean typeEquals(Type other);
+
+  @Override
+  public boolean equals(Object other) {
+    if (!(other instanceof Type) || other == null) {
+      return false;
+    }
+    return typeEquals((Type)other);
+  }
+
+  protected abstract int getMaxRepetitionLevel(String[] path, int i);
+
+  protected abstract int getMaxDefinitionLevel(String[] path, int i);
+
+  protected abstract Type getType(String[] path, int i);
+
+  protected abstract List<String[]> getPaths(int depth);
+
+  protected abstract boolean containsPath(String[] path, int depth);
+
+  /**
+   * @param toMerge the type to merge into this one
+   * @return the union result of merging toMerge into this
+   */
+  protected abstract Type union(Type toMerge);
+
+  /**
+   * {@inheritDoc}
+   */
+  @Override
+  public String toString() {
+    StringBuilder sb = new StringBuilder();
+    writeToStringBuilder(sb, "");
+    return sb.toString();
+  }
+
+  void checkContains(Type subType) {
+    if (!this.name.equals(subType.name)
+        || this.repetition != subType.repetition) {
+      throw new InvalidRecordException(subType + " found: expected " + this);
+    }
+  }
+
+  /**
+   *
+   * @param converter logic to convert the tree
+   * @return the converted tree
+   */
+//   abstract <T> T convert(List<GroupType> path, TypeConverter<T> converter);
+
+}

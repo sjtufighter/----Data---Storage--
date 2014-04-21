@@ -298,12 +298,8 @@ public class RunLengthEncodingIntReader   implements Decoder {
 
   @Override
   public byte[]  ensureDecompressed() throws IOException {
-
-    //  byte[]  bytes=inBuf.getData() ;
-    //  System.out.println("227   bytes  "+inBuf.getLength());
     FlexibleEncoding.ORC.DynamicByteArray  dynamicBuffer = new FlexibleEncoding.ORC.DynamicByteArray();
     dynamicBuffer.add(inBuf.getData(), 12, inBuf.getLength()-12);
-    //   System.out.println("232   "+dynamicBuffer.size());
     ByteBuffer byteBuf = ByteBuffer.allocate(dynamicBuffer.size());
     //  System.out.println("56  "+inBuf.getInt());
     dynamicBuffer.setByteBuffer(byteBuf, 0, dynamicBuffer.size());

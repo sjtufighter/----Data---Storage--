@@ -183,7 +183,7 @@ public class MVDecoder implements Decoder {
 
   @Override
   public void reset(byte[] buffer, int offset, int length) {
-    LOG.info("180  MV decoder nextPage  ");
+   // LOG.info("180  MV decoder nextPage  ");
     System.out.println("180  MV decoder nextPage  ");
     this.offset = offset;
     compressedSize = length;
@@ -197,7 +197,7 @@ public class MVDecoder implements Decoder {
 
     curIdx = 0;
     indexOffset = valueLen == -1 ? decompressedSize - numPairs * Bytes.SIZEOF_INT : -1;
-
+   System.out.println("200  indexOffset  "+indexOffset+" numPairs "+numPairs+"  ");
     if (compressAlgo == null)
       page = buffer;
     else {

@@ -146,8 +146,9 @@ public class DeltaBinaryArrayZigZarByteReader implements Decoder{
   @Override
   public Chunk nextChunk() throws IOException {
     if (curIdx >= 1) return null;
-    // System.out.println("151  nextChunk()   ensureDecompressed() ");
-    //  ensureDecompressed();
+    System.out.println("151  nextChunk()   ensureDecompressed() ");
+    // ensureDecompressed();
+    System.out.println("151   page  size "+page.length);
     mvChunk.setBuffer(page, offset +  3 * Bytes.SIZEOF_INT,
         offset + indexOffset, numPairs, startPos);
     curIdx++;
@@ -161,7 +162,7 @@ public class DeltaBinaryArrayZigZarByteReader implements Decoder{
 
     if (shadowChunk == null)
       shadowChunk = new MultiChunk(0, true, true, valueLen);
-    //   System.out.println("166   getChunkByPosition   ensureDecompressed() ");
+    System.out.println("166   getChunkByPosition   ensureDecompressed() "+  "page size  "+page.length);
     //ensureDecompressed();
     shadowChunk.setBuffer(page, offset +  3 * Bytes.SIZEOF_INT,
         offset + indexOffset, numPairs, startPos);
@@ -314,7 +315,7 @@ public class DeltaBinaryArrayZigZarByteReader implements Decoder{
     byteBuf.clear();
 
     inBuf.close();
-    //  System.out.println("256   decoding   "+decoding.size());
+    // System.out.println("256   decoding   "+decoding.size());
     return decoding.getData();
 
   }

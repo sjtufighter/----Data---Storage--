@@ -1,4 +1,5 @@
 package org.apache.hadoop.hive.mastiff;
+
 import java.io.Closeable;
 import java.io.IOException;
 import java.io.InputStream;
@@ -30,6 +31,12 @@ import org.apache.hadoop.hive.mastiffFlexibleEncoding.parquet.DeltaBinaryPacking
 import org.apache.hadoop.hive.mastiffFlexibleEncoding.parquet.DeltaByteArrayWriter;
 import org.apache.hadoop.hive.mastiffFlexibleEncoding.parquet.OnlyDictionaryValuesWriter.PlainBinaryDictionaryValuesWriter;
 import org.apache.hadoop.hive.mastiffFlexibleEncoding.parquet.OnlyDictionaryValuesWriter.PlainIntegerDictionaryValuesWriter;
+//import org.apache.hadoop.hive.ql.io.orc.DynamicIntArray;
+//import org.apache.hadoop.hive.ql.io.orc.IntegerWriter;
+//import org.apache.hadoop.hive.ql.io.orc.StringRedBlackTree;
+//import org.apache.hadoop.hive.ql.io.orc.DynamicIntArray;
+//import org.apache.hadoop.hive.ql.io.orc.IntegerWriter;
+//import org.apache.hadoop.hive.ql.io.orc.StringRedBlackTree;
 import org.apache.hadoop.io.BytesWritable;
 import org.apache.hadoop.io.DataInputBuffer;
 import org.apache.hadoop.io.DataOutputBuffer;
@@ -39,6 +46,7 @@ import org.apache.hadoop.mapred.JobConf;
 import org.apache.hadoop.mapred.Reporter;
 import org.apache.hadoop.util.StringUtils;
 
+import FlexibleEncoding.ORC.DynamicIntArray;
 import cn.ac.ncic.mastiff.PosChunk;
 import cn.ac.ncic.mastiff.ValPair;
 import cn.ac.ncic.mastiff.etl.ETLUtils;
@@ -50,7 +58,7 @@ import cn.ac.ncic.mastiff.io.coding.Compression.Algorithm;
 import cn.ac.ncic.mastiff.io.coding.EnDecode;
 import cn.ac.ncic.mastiff.io.coding.Encoder;
 import cn.ac.ncic.mastiff.io.coding.Encoder.CodingType;
-import cn.ac.ncic.mastiff.io.coding.VarLenEncoder;
+import cn.ac.ncic.mastiff.io.coding.ORCStringEcnodingUtil;
 import cn.ac.ncic.mastiff.io.segmentfile.BlockCache;
 import cn.ac.ncic.mastiff.io.segmentfile.LruBlockCache;
 import cn.ac.ncic.mastiff.io.segmentfile.PageCache;
@@ -83,8 +91,11 @@ public class SegmentFile {
   public static class Writer implements Closeable {
 
     public class TabConfig {
+      private DeltaByteArrayWriter[] deltaByteArrayStringWriter =null;
+      private DynamicIntArray[]  dynamicIntArray =null ;
       private  PlainBinaryDictionaryValuesWriter[]   dictionaryBitPackingRLEZigZarByte=null;
       private  PlainIntegerDictionaryValuesWriter[]   dictionaryBitPackingRLEZigZarInt=null;
+      private   ORCStringEcnodingUtil[] oRCStringEcnodingUtil=null ;
       private  TestInStream.OutputCollector[]  collect=null;
       private  DeltaBinaryPackingValuesWriter[]  deltaBianryBitPackingInt=null ;
       private DeltaByteArrayWriter[]  deltaByteArrayWriter=null ;
@@ -113,13 +124,14 @@ public class SegmentFile {
       private  long sgementSize = 0;
       private int[] startPoss, numReps;
       public  PageId segId;
+      private int   count=0 ;
       //   HashMap<Integer, List<BytesWritable>> segmentValue = new HashMap<Integer, List<BytesWritable>>();
       //     private final  ArrayList<List<BytesWritable>> clusterValue = new ArrayList<List<BytesWritable>>(SerializeUtil.desc.clusterTypes.size());
       private  ArrayList<List<BytesWritable>> clusterValue =null;
       private final  BytesWritable outValue = new BytesWritable();
       private final DataOutputBuffer out = new DataOutputBuffer();
-      //   private final   long SegmentSize=536870912-SerializeUtil.desc.clusterTypes.size()*131072;
-      private final   long SegmentSize=33554432*8-SerializeUtil.desc.clusterTypes.size()*131072*4;
+      private final   long SegmentSize=536870912-SerializeUtil.desc.clusterTypes.size()*131072;
+      //    private final   long SegmentSize=33554432*8-SerializeUtil.desc.clusterTypes.size()*131072*4;
       //     private final   long SegmentSize=1048576-SerializeUtil.desc.clusterTypes.size()*131072;
       private final  int[] tmpLength = new int[1];
       private int[][] columnsMapping;
@@ -150,8 +162,9 @@ public class SegmentFile {
             }
           }
         }
-
-
+        dynamicIntArray=new DynamicIntArray[numClusters] ;
+        oRCStringEcnodingUtil=new  ORCStringEcnodingUtil[numClusters] ;
+        deltaByteArrayStringWriter=new   DeltaByteArrayWriter[numClusters] ;
         runLengthInteger=new  RunLengthIntegerWriter[numClusters] ;
         runLengthByte=new  RunLengthByteWriter[numClusters] ;
         collect=new  TestInStream.OutputCollector[numClusters] ;
@@ -178,7 +191,7 @@ public class SegmentFile {
         //   FixedLenEncoder   fixedEncoding=null;
         //  RunLengthIntegerWriter[]   rleEncoding=null;
         // int pagesize = MastiffMapReduce.getTablePageSize(job);
-        int pagesize = 131072*4;
+        int pagesize = 131072*4*10*6 ;
         cluster_pages = new int[numClusters];
 
         for (int i = 0; i < numClusters; i++) {
@@ -282,11 +295,10 @@ public class SegmentFile {
             //                0, algorithms[i]);
             //            compressors[i] = new FixedLenEncoder(pagesizes[i],
             //                accessors[i].getFixedLen(), 0, algorithms[i]);
-
             compressors[i]=EnDecode.getEncoder(pagesizes[i],accessors[i].getFixedLen(), 0, algorithms[i],codings[i]);
           } else {
-
-            compressors[i] = new VarLenEncoder(pagesizes[i], 0, algorithms[i]);
+            compressors[i]=EnDecode.getEncoder(pagesizes[i],0, 0, algorithms[i],codings[i]);
+            //   compressors[i] = new VarLenEncoder(pagesizes[i], 0, algorithms[i]);
           }
           compressors[i].reset();
 
@@ -426,7 +438,16 @@ public class SegmentFile {
           else if(codings[i]==CodingType.DictionaryBitPackingRLELong){
             //   lastPageRunLengthEncodingByte( i);
             lastPageDictionaryBitPackingRLEZigZarLong(i);
+          } else if(codings[i]==CodingType.DeltaBinaryPackingString){
+            //   lastPageRunLengthEncodingByte( i);
+            lastPageDeltaBinaryPackingString(i);
           }
+          else if(codings[i]==CodingType.RedBlackTreeString){
+            //   lastPageRunLengthEncodingByte( i);
+            lastPageRedBlackTreeString(i);
+          }
+
+
           else {
             throw new UnsupportedEncodingException("Wrong encoding Type");
           }
@@ -436,6 +457,67 @@ public class SegmentFile {
         }
 
       }
+      private void lastPageRedBlackTreeString(int i) throws IOException {
+        oRCStringEcnodingUtil[i].dictionarySize= oRCStringEcnodingUtil[i].dictionary.size();
+        oRCStringEcnodingUtil[i].dumpOrder=new int[ oRCStringEcnodingUtil[i].dictionary.size()] ;
+        oRCStringEcnodingUtil[i].init();
+        oRCStringEcnodingUtil[i].iterator();
+        oRCStringEcnodingUtil[i].rowoutPut() ;
+        oRCStringEcnodingUtil[i].flush();
+        DataOutputBuffer  dob=new DataOutputBuffer() ;
+        dob.writeInt( oRCStringEcnodingUtil[i].dictionarySize);
+        int  length=oRCStringEcnodingUtil[i].collect1.buffer.size() ;
+        ByteBuffer inBuf = ByteBuffer.allocate( length);
+        oRCStringEcnodingUtil[i].collect1.buffer.setByteBuffer(inBuf, 0, length);
+        inBuf.flip();
+        dob.writeInt(length);
+        dob.write(inBuf.array(), 0, length);
+        inBuf.clear() ;
+        length=oRCStringEcnodingUtil[i].collect2.buffer.size() ;
+        oRCStringEcnodingUtil[i].collect2.buffer.setByteBuffer(inBuf, 0, length);
+        inBuf.flip();
+        dob.writeInt(length);
+        dob.write(inBuf.array(), 0, length);
+        inBuf.clear() ;
+        length=oRCStringEcnodingUtil[i].collect3.buffer.size() ;
+        oRCStringEcnodingUtil[i].collect3.buffer.setByteBuffer(inBuf, 0, length);
+        inBuf.flip();
+        dob.writeInt(length);
+        dob.write(inBuf.array(), 0, length);
+        inBuf.clear() ;
+        //        InStream in = InStream.create
+        //            ("test1", inBuf1, null, dictionarySize) ;
+        vps[i].data=dob.getData() ;
+        vps[i].offset = 0;
+        vps[i].length= vps[i].data.length ;
+        compressors[i].appendPage(vps[i]);
+        outputPage(i);
+        //          if (maxs[i] == null || mins[i] == null) {
+        //            maxs[i] = rows[i].duplicate();
+        //            mins[i] = rows[i].duplicate();
+        //          } else {
+        //            rows[i].compareAndSetMaxMin(maxs[i], mins[i]);
+        //          }
+        LOG.info("dataoffset  "+compressors[i].dataOffset);
+        LOG.info("numPairs  "+compressors[i].numPairs);
+        LOG.info("startPos  "+compressors[i].startPos);
+        //      pms[i].numPairs++;
+        pageInit[i]=false;
+
+      }
+
+      private void lastPageDeltaBinaryPackingString(int i) throws IOException {
+        vps[i].data=deltaByteArrayStringWriter[i].getBytes().toByteArray();
+        vps[i].offset = 0;
+        vps[i].length= vps[i].data.length ;
+        compressors[i].appendPage(vps[i]);
+
+        outputPage(i);
+        //      pms[i].numPairs++;
+        pageInit[i]=false;
+        deltaByteArrayStringWriter[i].reset();
+      }
+
       void   lastPageRunLengthEncodingInt(int  i) throws IOException{
         runLengthInteger[i].flush();
         ByteBuffer inBuf = ByteBuffer.allocate(collect[i].buffer.size());
@@ -618,7 +700,8 @@ public class SegmentFile {
               accessors[i].getFixedLen(), 0, algorithms[i],codings[i]);
           compressors[i].reset();
         } else {
-          compressors[i] = new VarLenEncoder(pagesizes[i], 0, algorithms[i]);
+          //     compressors[i] = new VarLenEncoder(pagesizes[i], 0, algorithms[i]);
+          compressors[i]=EnDecode.getEncoder(pagesizes[i],0, 0, algorithms[i],codings[i]);
           compressors[i].reset();
         }
         maxs[i] = mins[i] = null;
@@ -1239,98 +1322,19 @@ public class SegmentFile {
             case DictionaryBitPackingRLEByte:dictionaryBitPackingRLEByte(i);break ;
             case DictionaryBitPackingRLEInt:dictionaryBitPackingRLEInt(i);break ;
             case DictionaryBitPackingRLELong:dictionaryBitPackingRLELong(i);break ;
+            case DeltaBinaryPackingString:deltaBinaryPackingString(i);break ;
+            case RedBlackTreeString:redBlackTreeString(i);break ;
             default :  throw  new  UnsupportedEncodingException()  ;
             }
-
-
-            //            if (codings[i] == CodingType.RunLengthEncodingInt) {
-            //
-            //              if( pageInit[i]==false){
-            //                //      TestInStream.OutputCollector collect = new TestInStream.OutputCollector();
-            //                collect[i] = new TestInStream.OutputCollector();
-            //                // fixedEncoding=  (FixedLenEncoder)compressors[i]   ;
-            //                compressors[i].reset();
-            //                rleEncoding[i] = new RunLengthIntegerWriter(new OutStream("test", 1000, null, collect[i]), true);
-            //                pageInit[i]=true;
-            //              }
-            //
-            //              if(compressors[i].dataOffset + compressors[i].valueLen < compressors[i].pageCapacity){
-            //                //    if(collect.buffer.size()< fixedEncoding.pageCapacity-12-4){
-            //                //   rleEncoding.write(Long.parseLong((String)(rows[i].getValue(0))));
-            //                rleEncoding[i].write(((Integer)(rows[i].getValue(0))).intValue());
-            //                compressors[i].numPairs++;
-            //                compressors[i].dataOffset += compressors[i].valueLen;
-            //
-            //
-            //
-            //                if (maxs[i] == null || mins[i] == null) {
-            //                  maxs[i] = rows[i].duplicate();
-            //                  mins[i] = rows[i].duplicate();
-            //                } else {
-            //                  rows[i].compareAndSetMaxMin(maxs[i], mins[i]);
-            //                }
-            //
-            //                pms[i].numPairs++;
-            //              }
-            //              else{
-            //                rleEncoding[i].write(((Integer)(rows[i].getValue(0))).intValue());
-            //                compressors[i].numPairs++;
-            //                compressors[i].dataOffset += compressors[i].valueLen;
-            //
-            //
-            //
-            //                if (maxs[i] == null || mins[i] == null) {
-            //                  maxs[i] = rows[i].duplicate();
-            //                  mins[i] = rows[i].duplicate();
-            //                } else {
-            //                  rows[i].compareAndSetMaxMin(maxs[i], mins[i]);
-            //                }
-            //
-            //                pms[i].numPairs++;
-            //                System.out.println("dataoffset  "+compressors[i].dataOffset);
-            //                System.out.println("585 numPairs  "+compressors[i] .numPairs);
-            //                System.out.println("startPos  "+compressors[i] .startPos);
-            //                System.out.println("547 collect.buffer.size()  "+collect[i].buffer.size() );
-            //                System.out.println("547  fixedEncoding.dataOffset  "+compressors[i].dataOffset );
-            //                System.out.println("547 fixedEncoding.valueLen       "+compressors[i].valueLen );
-            //                System.out.println("547 fixedEncoding.pageCapacity    "+compressors[i].pageCapacity );
-            //                rleEncoding[i].flush();
-            //                ByteBuffer inBuf = ByteBuffer.allocate(collect[i].buffer.size());
-            //                //         collect.buffer.write(dos, 0, collect.buffer.size());
-            //                byte[] pageBytes=collect[i].buffer.getByteBuffer(inBuf, 0, collect[i].buffer.size()) ;
-            //                LOG.info("rlecodingSize "+pageBytes.length);
-            //                System.out.println("rlecodingSize "+pageBytes.length);
-            //                collect[i].buffer.clear();
-            //                inBuf.clear();
-            //
-            //                vps[i].data=pageBytes ;
-            //                vps[i].offset = 0;
-            //                vps[i].length= pageBytes.length;
-            //                compressors[i].appendPage(vps[i]);
-            //
-            //                outputPage(i);
-            //
-            //                if (maxs[i] == null || mins[i] == null) {
-            //                  maxs[i] = rows[i].duplicate();
-            //                  mins[i] = rows[i].duplicate();
-            //                } else {
-            //                  rows[i].compareAndSetMaxMin(maxs[i], mins[i]);
-            //                }
-            //                LOG.info("dataoffset  "+compressors[i].dataOffset);
-            //                LOG.info("numPairs  "+compressors[i].numPairs);
-            //                LOG.info("startPos  "+compressors[i].startPos);
-            //
-            //
-            //                pms[i].numPairs++;
-            //                pageInit[i]=false;
-            //              }
-            //
-            //            }
             //////////////////////////////////////////////////////////////////////////////////
 
           }
           else { // if (codings[i] == CodingType.MV)
             // try to write the current row
+            if(count<10){
+              count++ ;
+              System.out.println(rows[i].getValue(0).toString());
+            }
             vps[i].data = accessors[i].serialize(rows[i], tmpLength);
             vps[i].offset = 0;
             vps[i].length = tmpLength[0];
@@ -1380,6 +1384,239 @@ public class SegmentFile {
 
         //       rowMap=null ;
         //      val=null;
+
+      }
+
+      private void  redBlackTreeString(int i) throws IOException {
+        // TODO Auto-generated method stub
+
+        if( pageInit[i]==false){
+          System.out.println("compressors[i].bytesLeft  "+compressors[i].bytesLeft);
+
+          //      TestInStream.OutputCollector collect = new TestInStream.OutputCollector();
+          // deltaByteArrayStringWriter[i]=new DeltaByteArrayWriter(64*1024) ;
+          oRCStringEcnodingUtil[i]=new  ORCStringEcnodingUtil() ;
+
+          // fixedEncoding=  (FixedLenEncoder)compressors[i]   ;
+          compressors[i].reset();
+          pageInit[i]=true;
+          //   DeltaBinaryPackingStringWriter      deltaBinaryPackingStringWriter = (DeltaBinaryPackingStringWriter)compressors[i] ;
+        }
+        //   if (bytesLeft < pair.length + Bytes.SIZEOF_INT)
+        String  str=((String)(rows[i].getValue(0))) ;
+        if(compressors[i].bytesLeft>=( Bytes.SIZEOF_INT+str.length()+2)){
+          //     deltaByteArrayStringWriter[i].writeBytes(Binary.fromString(str));
+          oRCStringEcnodingUtil[i].add(str);
+          compressors[i].numPairs++;
+          compressors[i].dataOffset += str.length()+2;
+          //  compressors[i].index.writeInt(compressors[i].dataOffset);
+          compressors[i].bytesLeft -= str.length()+2 ;
+          compressors[i].bytesLeft -= Bytes.SIZEOF_INT;
+          //      numPairs++;
+          //      dataOffset += pair.length;
+          //
+          //      // index it offset
+          //      index.writeInt(dataOffset);
+          //      bytesLeft -= pair.length;
+          //      bytesLeft -= Bytes.SIZEOF_INT;
+
+
+          if (maxs[i] == null || mins[i] == null) {
+            maxs[i] = rows[i].duplicate();
+            mins[i] = rows[i].duplicate();
+          } else {
+            rows[i].compareAndSetMaxMin(maxs[i], mins[i]);
+          }
+
+          pms[i].numPairs++;
+        }
+        else{
+          //          deltaByteArrayStringWriter[i].writeBytes(Binary.fromString(str));
+          //          compressors[i].numPairs++;
+          //          compressors[i].dataOffset += str.length();
+          //    compressors[i].index.writeInt(compressors[i].dataOffset);
+          //          compressors[i].bytesLeft -= str.length() ;
+          //          compressors[i].bytesLeft -= Bytes.SIZEOF_INT;
+          if (maxs[i] == null || mins[i] == null) {
+            maxs[i] = rows[i].duplicate();
+            mins[i] = rows[i].duplicate();
+          } else {
+            rows[i].compareAndSetMaxMin(maxs[i], mins[i]);
+          }
+
+          pms[i].numPairs++;
+          //          try {
+          //            runLengthInteger[i].flush();
+          //          } catch (IOException e) {
+          //            e.printStackTrace();
+          //          }
+
+          //
+          //                    ByteBuffer inBuf = ByteBuffer.allocate(collect[i].buffer.size());
+          //                    //         collect.buffer.write(dos, 0, collect.buffer.size());
+          //                    byte[] pageBytes=collect[i].buffer.getByteBuffer(inBuf, 0, collect[i].buffer.size()) ;
+          //                    collect[i].buffer.clear();
+          //                    inBuf.clear();
+          //          test.test1();
+          //          dumpOrder = new int[dictionary.size()];
+          //          dictionarySize=dictionary.size();
+          //          test.init();
+          //          test.iterator();
+          //          test.rowoutPut();
+          //          test.flush();
+
+          oRCStringEcnodingUtil[i].dictionarySize= oRCStringEcnodingUtil[i].dictionary.size();
+          oRCStringEcnodingUtil[i].dumpOrder=new int[ oRCStringEcnodingUtil[i].dictionary.size()] ;
+
+          oRCStringEcnodingUtil[i].init();
+          oRCStringEcnodingUtil[i].iterator();
+          oRCStringEcnodingUtil[i].rowoutPut() ;
+          oRCStringEcnodingUtil[i].flush();
+          DataOutputBuffer  dob=new DataOutputBuffer() ;
+          dob.writeInt( oRCStringEcnodingUtil[i].dictionarySize);
+          int  length=oRCStringEcnodingUtil[i].collect1.buffer.size() ;
+          ByteBuffer inBuf = ByteBuffer.allocate( length);
+
+          oRCStringEcnodingUtil[i].collect1.buffer.setByteBuffer(inBuf, 0, length);
+          inBuf.flip();
+          dob.writeInt(length);
+          dob.write(inBuf.array(), 0, length);
+          inBuf.clear() ;
+          length=oRCStringEcnodingUtil[i].collect2.buffer.size() ;
+          oRCStringEcnodingUtil[i].collect2.buffer.setByteBuffer(inBuf, 0, length);
+          inBuf.flip();
+          dob.writeInt(length);
+          dob.write(inBuf.array(), 0, length);
+          inBuf.clear() ;
+          length=oRCStringEcnodingUtil[i].collect3.buffer.size() ;
+          oRCStringEcnodingUtil[i].collect3.buffer.setByteBuffer(inBuf, 0, length);
+          inBuf.flip();
+          dob.writeInt(length);
+          dob.write(inBuf.array(), 0, length);
+          inBuf.clear() ;
+          //          InStream in = InStream.create
+          //              ("test1", inBuf1, null, dictionarySize) ;
+
+          vps[i].data=dob.getData() ;
+          vps[i].offset = 0;
+          vps[i].length= vps[i].data.length ;
+          compressors[i].appendPage(vps[i]);
+          outputPage(i);
+          //          if (maxs[i] == null || mins[i] == null) {
+          //            maxs[i] = rows[i].duplicate();
+          //            mins[i] = rows[i].duplicate();
+          //          } else {
+          //            rows[i].compareAndSetMaxMin(maxs[i], mins[i]);
+          //          }
+          LOG.info("dataoffset  "+compressors[i].dataOffset);
+          LOG.info("numPairs  "+compressors[i].numPairs);
+          LOG.info("startPos  "+compressors[i].startPos);
+          //      pms[i].numPairs++;
+          pageInit[i]=false;
+        }
+      }
+      //      if (bytesLeft < pair.length + Bytes.SIZEOF_INT)
+      //        return false;
+      //
+      //      System.arraycopy(pair.data, 0, page, dataOffset, pair.length);
+      //      numPairs++;
+      //      dataOffset += pair.length;
+      //
+      //      // index it offset
+      //      index.writeInt(dataOffset);
+      //      bytesLeft -= pair.length;
+      //      bytesLeft -= Bytes.SIZEOF_INT;
+      //      PlainValuesWriter writer = new PlainValuesWriter(64*1024);
+      //      BinaryPlainValuesReader reader = new BinaryPlainValuesReader();
+      //
+      //      Utils.writeData(writer, values);
+      //      byte [] data = writer.getBytes().toByteArray();
+      private void deltaBinaryPackingString(int i) throws IOException {
+        // TODO Auto-generated method stub
+
+        if( pageInit[i]==false){
+          System.out.println("compressors[i].bytesLeft  "+compressors[i].bytesLeft);
+
+          //      TestInStream.OutputCollector collect = new TestInStream.OutputCollector();
+          deltaByteArrayStringWriter[i]=new DeltaByteArrayWriter(64*1024) ;
+          // fixedEncoding=  (FixedLenEncoder)compressors[i]   ;
+          compressors[i].reset();
+          pageInit[i]=true;
+          //   DeltaBinaryPackingStringWriter      deltaBinaryPackingStringWriter = (DeltaBinaryPackingStringWriter)compressors[i] ;
+        }
+        //   if (bytesLeft < pair.length + Bytes.SIZEOF_INT)
+        String  str=((String)(rows[i].getValue(0))) ;
+        if(compressors[i].bytesLeft>=( Bytes.SIZEOF_INT+str.length()+2)){
+          deltaByteArrayStringWriter[i].writeBytes(Binary.fromString(str));
+          compressors[i].numPairs++;
+          compressors[i].dataOffset += str.length()+2;
+          //  compressors[i].index.writeInt(compressors[i].dataOffset);
+          compressors[i].bytesLeft -= str.length()+2 ;
+          compressors[i].bytesLeft -= Bytes.SIZEOF_INT;
+          //      numPairs++;
+          //      dataOffset += pair.length;
+          //
+          //      // index it offset
+          //      index.writeInt(dataOffset);
+          //      bytesLeft -= pair.length;
+          //      bytesLeft -= Bytes.SIZEOF_INT;
+
+
+          if (maxs[i] == null || mins[i] == null) {
+            maxs[i] = rows[i].duplicate();
+            mins[i] = rows[i].duplicate();
+          } else {
+            rows[i].compareAndSetMaxMin(maxs[i], mins[i]);
+          }
+
+          pms[i].numPairs++;
+        }
+        else{
+          //          deltaByteArrayStringWriter[i].writeBytes(Binary.fromString(str));
+          //          compressors[i].numPairs++;
+          //          compressors[i].dataOffset += str.length();
+          //    compressors[i].index.writeInt(compressors[i].dataOffset);
+          //          compressors[i].bytesLeft -= str.length() ;
+          //          compressors[i].bytesLeft -= Bytes.SIZEOF_INT;
+          if (maxs[i] == null || mins[i] == null) {
+            maxs[i] = rows[i].duplicate();
+            mins[i] = rows[i].duplicate();
+          } else {
+            rows[i].compareAndSetMaxMin(maxs[i], mins[i]);
+          }
+
+          pms[i].numPairs++;
+          //          try {
+          //            runLengthInteger[i].flush();
+          //          } catch (IOException e) {
+          //            e.printStackTrace();
+          //          }
+
+          //
+          //          ByteBuffer inBuf = ByteBuffer.allocate(collect[i].buffer.size());
+          //          //         collect.buffer.write(dos, 0, collect.buffer.size());
+          //          byte[] pageBytes=collect[i].buffer.getByteBuffer(inBuf, 0, collect[i].buffer.size()) ;
+          //          collect[i].buffer.clear();
+          //          inBuf.clear();
+
+          vps[i].data=deltaByteArrayStringWriter[i].getBytes().toByteArray();
+          vps[i].offset = 0;
+          vps[i].length= vps[i].data.length ;
+          compressors[i].appendPage(vps[i]);
+          outputPage(i);
+          //          if (maxs[i] == null || mins[i] == null) {
+          //            maxs[i] = rows[i].duplicate();
+          //            mins[i] = rows[i].duplicate();
+          //          } else {
+          //            rows[i].compareAndSetMaxMin(maxs[i], mins[i]);
+          //          }
+          LOG.info("dataoffset  "+compressors[i].dataOffset);
+          LOG.info("numPairs  "+compressors[i].numPairs);
+          LOG.info("startPos  "+compressors[i].startPos);
+          //      pms[i].numPairs++;
+          pageInit[i]=false;
+          //    deltaByteArrayStringWriter[i].reset();
+        }
 
       }
 
@@ -2254,7 +2491,7 @@ public class SegmentFile {
         // length);
 
         //  LOG.info("1567   byte[] nextPage()  length  "+length+"   clusterId  "+clusterId+"  curPageId  "+curPageId+"  offset  "+offset);
-        //        System.out.println("1567   byte[] nextPage()  length  "+length+"   clusterId  "+clusterId+"  curPageId  "+curPageId+"  offset  "+offset);
+        System.out.println("1567   byte[] nextPage()  length  "+length+"   clusterId  "+clusterId+"  curPageId  "+curPageId+"  offset  "+offset);
         byte[] page = sr.readPage(clusterId, curPageId, offset, length, cachePage).array();
         //   LOG.info("1567   byte[] nextPage()  pageLength   "+page.length);
         //   System.out.println("1567   byte[] nextPage()  pageLength   "+page.length);

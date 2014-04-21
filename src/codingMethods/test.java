@@ -21,13 +21,13 @@ package cn.ac.ncic.mastiff.io.coding;
 
 public class test   extends  superclass{
 
-  
+  //VisitorContext
   
   public  static void   main(String[]  args ){
       test  T=new    test()  ;
       T.count++ ;
    //   System.out.println(T.count);
-      
+      //ValPair
       int m=5;
       for(int i=0;i<m;i++){
         System.out.println("times");

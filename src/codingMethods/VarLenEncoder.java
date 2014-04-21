@@ -33,70 +33,76 @@ import cn.ac.ncic.mastiff.utils.Bytes;
  * A Var-length encoder to encode several cluster or triples in a page.
  */
 public class VarLenEncoder extends  Encoder {
-
-//  ByteBuffer bb;
-//  byte[] page;
-//  
-//  int pageCapacity;
-//  
-//  int dataOffset;
-//  int numPairs = 0;
-//  int startPos;
-//  
-  DataOutputBuffer index = new DataOutputBuffer();
-  
-  int bytesLeft;
-  
+  // VarLenDecoder
+  //  ByteBuffer bb;
+  //  byte[] page;
+  //  
+  //  int pageCapacity;
+  //  
+  //  int dataOffset;
+  //  int numPairs = 0;
+  //  int startPos;
+  //  
+  //  DataOutputBuffer index = new DataOutputBuffer();
+  //  
+  //  int bytesLeft;
+  int  count=0 ;
   Algorithm compressAlgo;
   org.apache.hadoop.io.compress.Compressor compressor;
   DataOutputBuffer outputBuffer = new DataOutputBuffer();
-  
-  public VarLenEncoder(int pageLen_, int startPos_, Algorithm algorithm) {
+
+  public VarLenEncoder(int pageLen_, int valueLen_ , int startPos_, Algorithm algorithm) {
     pageCapacity = pageLen_;
     startPos = startPos_;
     this.compressAlgo = algorithm;
-    
+    valueLen_=valueLen_ ;
     page = new byte[pageCapacity];
     reset();
   }
-  
+
   @Override
   public boolean append(ValPair pair) throws IOException {
     if (bytesLeft < pair.length + Bytes.SIZEOF_INT)
       return false;
-    
+    //    if(count< 10){
+    //      count++ ;
+    //      System.out.println("pair.length  "+pair.length);
+    //    }
     System.arraycopy(pair.data, 0, page, dataOffset, pair.length);
     numPairs++;
     dataOffset += pair.length;
-    
+
     // index it offset
     index.writeInt(dataOffset);
     bytesLeft -= pair.length;
     bytesLeft -= Bytes.SIZEOF_INT;
-    
+
     return true;
   }
+
 
   @Override
   public byte[] getPage() throws IOException {
     if (dataOffset == 3 * Bytes.SIZEOF_INT) // no data appended
       return null;
-    
+
     System.arraycopy(index.getData(), 0, page, dataOffset, index.getLength());
     if (compressAlgo == null) {
       bb = ByteBuffer.wrap(page, 0, dataOffset);
       bb.putInt(pageCapacity - bytesLeft);
       bb.putInt(numPairs);
       bb.putInt(startPos);
+      System.out.println("91     pageCapacity  "+pageCapacity+"  dataOffset "+ dataOffset+"  bytesLeft  "+bytesLeft+" numPairs  "+numPairs+" startPos "+startPos);
       return page;
     } else {
+      System.out.println("93     pageCapacity  "+pageCapacity+" bytesLeft  "+bytesLeft+" numPairs  "+numPairs+" startPos "+startPos);
       outputBuffer.reset();
       outputBuffer.writeInt(pageCapacity - bytesLeft);
       outputBuffer.writeInt(numPairs);
       outputBuffer.writeInt(startPos);
       compressor = compressAlgo.getCompressor();
       OutputStream os =
-        this.compressAlgo.createCompressionStream(outputBuffer, compressor, 0);
+          this.compressAlgo.createCompressionStream(outputBuffer, compressor, 0);
       os.write(page, 3 * Bytes.SIZEOF_INT, pageCapacity - bytesLeft - 3 * Bytes.SIZEOF_INT);
       os.flush();
       this.compressAlgo.returnCompressor(compressor);
@@ -109,7 +115,7 @@ public class VarLenEncoder extends  Encoder {
   public int getPageLen() {
     if (dataOffset == 3 * Bytes.SIZEOF_INT) // no data appended
       return 0;
-    
+
     if (compressAlgo == null)
       return pageCapacity - bytesLeft;
     else
@@ -122,7 +128,7 @@ public class VarLenEncoder extends  Encoder {
     numPairs = 0;
     dataOffset = 3 * Bytes.SIZEOF_INT;
     bytesLeft = pageCapacity - dataOffset;
-    
+
     index.reset();
   }
 

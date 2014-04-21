@@ -22,6 +22,8 @@ package cn.ac.ncic.mastiff.io.coding;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 
+import org.apache.hadoop.io.DataOutputBuffer;
+
 import cn.ac.ncic.mastiff.ValPair;
 
 /**
@@ -34,7 +36,9 @@ public abstract class  Encoder {
   /**
    * Coding Type
    */
+  public DataOutputBuffer index = new DataOutputBuffer();
   
+ public int bytesLeft;
   public  ByteBuffer bb;
   public  byte[] page;
 
@@ -61,6 +65,8 @@ public abstract class  Encoder {
     DictionaryBitPackingRLEInt,
     DictionaryBitPackingRLEByte,
     DictionaryBitPackingRLELong,
+    DeltaBinaryPackingString,
+    RedBlackTreeString
   }
   
   /**

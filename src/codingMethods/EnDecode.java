@@ -67,6 +67,17 @@ public class EnDecode {
       decompressor = new DeltaBinaryBitPackingZigZarLongReader(sortedCol_, valueLen_,algo_);
 
     }
+   else if (type_ == CodingType.DeltaBinaryPackingString){
+
+    decompressor = new DeltaBinaryPackingStringReader(sortedCol_, valueLen_,algo_);
+
+  }
+ else if (type_ == CodingType.RedBlackTreeString){
+
+  decompressor = new RedBlackTreeStringReader(sortedCol_, valueLen_,algo_);
+
+}
+    
     else {
       throw new UnsupportedOperationException("Unsupported codingtype " + type_);
     }
@@ -103,8 +114,20 @@ public class EnDecode {
       default :  throw new UnsupportedOperationException("Unsupported codingtype " + type_); 
       }
     } else {
-      //  System.out.println("116 ......................  new VarLenEncoder");
-      compressor = new VarLenEncoder(pageCapacity_, startPos_, algo_);
+      switch (type_){
+      case  DeltaBinaryPackingString :
+        System.out.println("106 ......................  new DeltaBinaryPackingString   "+"  pageCapacity_  "+pageCapacity_+"   startPos_  "+startPos_+"   algo_ "+algo_);
+        compressor=new DeltaBinaryPackingStringWriter(pageCapacity_, valueLen_, startPos_, algo_);   break ;  
+      case  RedBlackTreeString:
+         compressor=new  RedBlackTreeStringWriter(pageCapacity_, valueLen_, startPos_, algo_);   break ;
+      case MV:
+        System.out.println("106 ......................  new VarLenEncoder   "+"  pageCapacity_  "+pageCapacity_+"   startPos_  "+startPos_+"   algo_ "+algo_);
+        compressor = new VarLenEncoder(pageCapacity_, valueLen_, startPos_, algo_);break ;
+         default :throw new UnsupportedOperationException("Unsupported codingtype " + type_); 
+           
+      }
+ //     System.out.println("106 ......................  new VarLenEncoder   "+"  pageCapacity_  "+pageCapacity_+"   startPos_  "+startPos_+"   algo_ "+algo_);
+  //    compressor = new VarLenEncoder(pageCapacity_, startPos_, algo_);
     }
     return compressor;
   }

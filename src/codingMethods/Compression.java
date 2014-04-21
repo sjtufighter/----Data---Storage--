@@ -37,7 +37,7 @@ import org.apache.hadoop.io.compress.GzipCodec;
 import org.apache.hadoop.io.compress.DefaultCodec;
 
 import com.hadoop.compression.lzo.LzoCodec;
-
+//ClusterAccessor
 /**
  * Compression related stuff.
  * Copied from hadoop-3315 tfile.
