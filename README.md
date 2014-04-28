@@ -13,9 +13,9 @@ SO ,WHAT  IS  THIS PROJECT FOR ?
 
    I have addapted the segmentFile design and then implement  this format  in Hive to support a  new fast storage format which  is faster than RCFile ,even  faster than ORC.  Build on  this format ,I  try  to extract   the basic  encoding ways  in Parquet and ORC ,such as RLE,bit packing ,Delta encoding ，ZigZar，Dictionary,VLQ  and google Proto buffer. This is the first step ,then I  make  up   this basic encoding ways  to  synthetic  data encoding is more  efficient.    At last I implement this flexible encoding   in  HIve-FOSF  format  .
 
-Thanks
+Thanks  many thanks
 
-
+thanks
 
 CODES  OF CONDUCT  AND  HOW  TO  RUN
 
