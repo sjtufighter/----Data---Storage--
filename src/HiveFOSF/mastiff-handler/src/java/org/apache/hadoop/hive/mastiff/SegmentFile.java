@@ -31,12 +31,6 @@ import org.apache.hadoop.hive.mastiffFlexibleEncoding.parquet.DeltaBinaryPacking
 import org.apache.hadoop.hive.mastiffFlexibleEncoding.parquet.DeltaByteArrayWriter;
 import org.apache.hadoop.hive.mastiffFlexibleEncoding.parquet.OnlyDictionaryValuesWriter.PlainBinaryDictionaryValuesWriter;
 import org.apache.hadoop.hive.mastiffFlexibleEncoding.parquet.OnlyDictionaryValuesWriter.PlainIntegerDictionaryValuesWriter;
-//import org.apache.hadoop.hive.ql.io.orc.DynamicIntArray;
-//import org.apache.hadoop.hive.ql.io.orc.IntegerWriter;
-//import org.apache.hadoop.hive.ql.io.orc.StringRedBlackTree;
-//import org.apache.hadoop.hive.ql.io.orc.DynamicIntArray;
-//import org.apache.hadoop.hive.ql.io.orc.IntegerWriter;
-//import org.apache.hadoop.hive.ql.io.orc.StringRedBlackTree;
 import org.apache.hadoop.io.BytesWritable;
 import org.apache.hadoop.io.DataInputBuffer;
 import org.apache.hadoop.io.DataOutputBuffer;
@@ -124,7 +118,7 @@ public class SegmentFile {
       private  long  pageIdCount=0 ;
       private  long sgementSize = 0;
       private int[] startPoss, numReps;
-      public  PageId segId;
+      private PageId segId;
       private final int   count=0 ;
       private  ArrayList<List<BytesWritable>> clusterValue =null;
       private final  BytesWritable outValue = new BytesWritable();
@@ -185,9 +179,6 @@ public class SegmentFile {
             }
           }
         }
-        //    TestInStream.OutputCollector[]  collect=null;
-        //   FixedLenEncoder   fixedEncoding=null;
-        //  RunLengthIntegerWriter[]   rleEncoding=null;
         // int pagesize = MastiffMapReduce.getTablePageSize(job);
         int pagesize = 131072*4*10;
         cluster_pages = new int[numClusters];
@@ -280,13 +271,7 @@ public class SegmentFile {
             algorithms[i] = null;
           }
           if (accessors[i].getFixedLen() > 0) {
-            //            compressors[i] = new FixedLenEncoder(pagesizes[i],
-            //                accessors[i].getFixedLen()
-            //                + (codings[i] == CodingType.RLE ? 2 * Bytes.SIZEOF_INT : 0),
-            //                0, algorithms[i]);
-            //            compressors[i] = new FixedLenEncoder(pagesizes[i],
-            //                accessors[i].getFixedLen(), 0, algorithms[i]);
-            compressors[i]=EnDecode.getEncoder(pagesizes[i],accessors[i].getFixedLen(), 0, algorithms[i],codings[i]);
+compressors[i]=EnDecode.getEncoder(pagesizes[i],accessors[i].getFixedLen(), 0, algorithms[i],codings[i]);
           } else {
             compressors[i]=EnDecode.getEncoder(pagesizes[i],0, 0, algorithms[i],codings[i]);
             //   compressors[i] = new VarLenEncoder(pagesizes[i], 0, algorithms[i]);
