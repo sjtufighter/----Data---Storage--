@@ -72,17 +72,13 @@ public class DeltaBinaryArrayZigZarByteReader implements Decoder{
    * @param algorithm which compression algorithm used to compress the data
    */
   public   DeltaBinaryArrayZigZarByteReader(int sortedCol, int valueLen_,Algorithm  algorithm) {
-    //System.out.println("81  MVDEcoder  gou zao  han shu ");
-    //   System.out.println("82   sortCol   "+sortedCol+"   valuenLen  "+valueLen );
     valueLen = valueLen_;
     compressAlgo = algorithm;
-
     mvChunk = new MultiChunk(sortedCol, true, true, valueLen_);
   }
 
   @Override
   public ValPair begin() throws IOException {
-    //    System.out.println("89     begin()    ensureDecompressed()");
     //ensureDecompressed();
     pair.data = page;
     pair.offset = offset + 3 * Bytes.SIZEOF_INT;
@@ -100,7 +96,6 @@ public class DeltaBinaryArrayZigZarByteReader implements Decoder{
   @Override
   public ValPair end() throws IOException {
     // ensureDecompressed();
-    //  System.out.println("106   end()    ensureDecompressed()");
     if (numPairs == 1) 
       return begin();
     else {
@@ -159,7 +154,6 @@ public class DeltaBinaryArrayZigZarByteReader implements Decoder{
   public Chunk getChunkByPosition(int position) throws IOException {
     if (position < startPos || position >= startPos + numPairs)
       return null;
-
     if (shadowChunk == null)
       shadowChunk = new MultiChunk(0, true, true, valueLen);
     System.out.println("166   getChunkByPosition   ensureDecompressed() "+  "page size  "+page.length);
@@ -179,14 +173,10 @@ public class DeltaBinaryArrayZigZarByteReader implements Decoder{
   public void reset(byte[] buffer, int offset, int length) throws IOException {
     this.offset = offset;
     compressedSize = length;
-    //  System.out.println("182  buffer  "+buffer.length+"  offset  "+offset+"  length  "+length);
     bb = ByteBuffer.wrap(buffer, offset, length);
     decompressedSize = bb.getInt();
     numPairs = bb.getInt();
     startPos = bb.getInt();
-    //  System.out.println("188  decompressedSize  "+ decompressedSize+"  numPairs  "+numPairs+"  startPos  "+startPos);
-    // System.out.println("Decompress a compressed page size " + compressedSize + " into a page size " + decompressedSize);
-
     curIdx = 0;
     indexOffset = valueLen == -1 ? decompressedSize - numPairs * Bytes.SIZEOF_INT : -1;
 
@@ -197,11 +187,7 @@ public class DeltaBinaryArrayZigZarByteReader implements Decoder{
     }
     else{
       decompressedSize=bb.getInt();
-      //   System.out.println("196  compressAlgo  "+compressAlgo);
-      //   System.out.println(" decompressedSize  "+ decompressedSize);
-      //  System.out.println("length  "+length);
-      //   System.out.println("buffer  "+buffer.length);
-      //      inBuf.reset(buffer, offset + 3 * Bytes.SIZEOF_INT, compressedSize - 3 * Bytes.SIZEOF_INT);
+      // inBuf.reset(buffer, offset + 3 * Bytes.SIZEOF_INT, compressedSize - 3 * Bytes.SIZEOF_INT);
       inBuf.reset(buffer, offset + 4 * Bytes.SIZEOF_INT, length - 4 * Bytes.SIZEOF_INT);
       ensureDecompress() ;
       page =  CompressensureDecompressed();
@@ -211,115 +197,56 @@ public class DeltaBinaryArrayZigZarByteReader implements Decoder{
   }
   public  void ensureDecompress() throws IOException {
     //  if (compressAlgo != null) {
-
     org.apache.hadoop.io.compress.Decompressor decompressor = this.compressAlgo.getDecompressor();
     InputStream is = this.compressAlgo.createDecompressionStream(inBuf, decompressor, 0);
-    //      System.out.println("238   "+inBuf.getLength());
-
     ByteBuffer buf = ByteBuffer.allocate(decompressedSize);
-    // ByteBuffer buf = ByteBuffer.allocate(is.available());
-    //   System.out.println("241  "+decompressedSize);
     IOUtils.readFully(is, buf.array(),0, buf.capacity());
     is.close(); 
     this.compressAlgo.returnDecompressor(decompressor);
-    // page = buf.array();
-    // System.out.println("240  buf.array()   "+buf.array().length);
     inBuf.reset(buf.array(), offset, buf.capacity());
-
-    //  }
   }
   public byte[]  CompressensureDecompressed() throws IOException {
-    //  byte[]  bytes=inBuf.getData() ;
-    // System.out.println("227   bytes  "+inBuf.getLength());
     FlexibleEncoding.ORC.DynamicByteArray  dynamicBuffer = new FlexibleEncoding.ORC.DynamicByteArray();
     dynamicBuffer.add(inBuf.getData(), 0, inBuf.getLength());
     FlexibleEncoding.Parquet.DeltaByteArrayReader reader = new FlexibleEncoding.Parquet.DeltaByteArrayReader();
-    //   System.out.println("232   "+dynamicBuffer.size());
     ByteBuffer byteBuf = ByteBuffer.allocate(dynamicBuffer.size());
-    //  System.out.println("56  "+inBuf.getInt());
     dynamicBuffer.setByteBuffer(byteBuf, 0, dynamicBuffer.size());
     byteBuf.flip();
     reader.initFromPage(numPairs,  byteBuf.array(), 0);
-    // bb = ByteBuffer.wrap(page, 0, page.length);
-    //  int  count=0 ;
     DataOutputBuffer   decoding = new DataOutputBuffer();
     decoding.writeInt(decompressedSize);
     decoding.writeInt(numPairs);
     decoding.writeInt(startPos);
-    // System.out.println("numPairs  "+numPairs);
     for(int i=0; i < numPairs; i++) {
-
       byte  tmp= Byte.parseByte(reader.readBytes().toStringUsingUTF8());
       decoding.writeByte(tmp);
     }
     byteBuf.clear();
-
     inBuf.close();
-    //  System.out.println("256   decoding   "+decoding.size());
     return decoding.getData();
-
   }
-
-  //  DeltaByteArrayReader reader = new DeltaByteArrayReader() ;
-  //  reader.initFromPage(fileLong, bytes,0);
-  //  //Binary binary=    reader.readBytes();
-  //  Binary[] binary = new Binary[fileLong];
-  //  byte[] result=new byte[fileLong];
-  //  //  long  tmp=System.currentTimeMillis();
-  //  for(int i=0; i < fileLong; i++) {
-  //    //   binary[i] = reader.readBytes();
-  //    //      if(i==1){
-  //    //        System.out.println("type "+reader.readBytes());
-  //    //      }
-  //    //  binary[i].writeTo(out);
-  //    //  Binary tmp=   reader.readBytes();
-  //    //  System.out.println(tmp.);
-  //    result[i] = Byte.parseByte(reader.readBytes().toStringUsingUTF8());
-  //    //  result[i] = reader.readByte();
-  //    //result[i] = reader.readB
-  ////    if(data[i]==result[i]){
-  ////      System.out.println(result[i]);
-  ////      
-  ////    }
-  //    count++;
-  //    //  System.out.println(data[i]);
-  //
-  //    //    result[i]=binary[i].getBytes()[0];
-  //  }
 
   @Override
   public byte[]  ensureDecompressed() throws IOException {
-    //  byte[]  bytes=inBuf.getData() ;
-    //    System.out.println("227   bytes  "+inBuf.getLength());
     FlexibleEncoding.ORC.DynamicByteArray  dynamicBuffer = new FlexibleEncoding.ORC.DynamicByteArray();
     dynamicBuffer.add(inBuf.getData(), 12, inBuf.getLength()-12);
     FlexibleEncoding.Parquet.DeltaByteArrayReader reader = new FlexibleEncoding.Parquet.DeltaByteArrayReader();
-    //   System.out.println("232   "+dynamicBuffer.size());
     ByteBuffer byteBuf = ByteBuffer.allocate(dynamicBuffer.size());
-    //  System.out.println("56  "+inBuf.getInt());
     dynamicBuffer.setByteBuffer(byteBuf, 0, dynamicBuffer.size());
     byteBuf.flip();
     reader.initFromPage(numPairs,  byteBuf.array(), 0);
-    // bb = ByteBuffer.wrap(page, 0, page.length);
-    //  int  count=0 ;
     DataOutputBuffer   decoding = new DataOutputBuffer();
     decoding.writeInt(decompressedSize);
     decoding.writeInt(numPairs);
     decoding.writeInt(startPos);
-    //System.out.println("numPairs  "+numPairs);
     for(int i=0; i < numPairs; i++) {
-
       byte  tmp= Byte.parseByte(reader.readBytes().toStringUsingUTF8());
       decoding.writeByte(tmp);
     }
     byteBuf.clear();
-
     inBuf.close();
-    // System.out.println("256   decoding   "+decoding.size());
     return decoding.getData();
-
   }
-
   @Override
   public boolean skipToPos(int pos) {
     if (pos < startPos || pos >= startPos + numPairs)

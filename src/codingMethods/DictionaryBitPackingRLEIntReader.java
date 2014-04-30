@@ -79,18 +79,13 @@ public class DictionaryBitPackingRLEIntReader implements Decoder {
    * @param algorithm which compression algorithm used to compress the data
    */
   public   DictionaryBitPackingRLEIntReader(int sortedCol, int valueLen_,Algorithm algorithm) {
-    //System.out.println("81  MVDEcoder  gou zao  han shu ");
-    // System.out.println("82   sortCol   "+sortedCol+"   valuenLen  "+valueLen );
     valueLen = valueLen_;
     compressAlgo = algorithm;
-
     mvChunk = new MultiChunk(sortedCol, true, true, valueLen_);
   }
 
   @Override
   public ValPair begin() throws IOException {
-    //  System.out.println("89     begin()    ensureDecompressed()");
-    //ensureDecompressed();
     pair.data = page;
     pair.offset = offset + 3 * Bytes.SIZEOF_INT;
     pair.length = valueLen == -1 ?  
@@ -106,8 +101,6 @@ public class DictionaryBitPackingRLEIntReader implements Decoder {
 
   @Override
   public ValPair end() throws IOException {
-    // ensureDecompressed();
-    // System.out.println("106   end()    ensureDecompressed()");
     if (numPairs == 1) 
       return begin();
     else {
@@ -153,8 +146,6 @@ public class DictionaryBitPackingRLEIntReader implements Decoder {
   @Override
   public Chunk nextChunk() throws IOException {
     if (curIdx >= 1) return null;
-    // System.out.println("151  nextChunk()   ensureDecompressed() ");
-    //  ensureDecompressed();
     mvChunk.setBuffer(page, offset +  3 * Bytes.SIZEOF_INT,
         offset + indexOffset, numPairs, startPos);
     curIdx++;
@@ -168,7 +159,6 @@ public class DictionaryBitPackingRLEIntReader implements Decoder {
 
     if (shadowChunk == null)
       shadowChunk = new MultiChunk(0, true, true, valueLen);
-    // System.out.println("166   getChunkByPosition   ensureDecompressed() ");
     //ensureDecompressed();
     shadowChunk.setBuffer(page, offset +  3 * Bytes.SIZEOF_INT,
         offset + indexOffset, numPairs, startPos);
@@ -185,29 +175,18 @@ public class DictionaryBitPackingRLEIntReader implements Decoder {
   public void reset(byte[] buffer, int offset, int length) throws IOException {
     this.offset = offset;
     compressedSize = length;
-    //   System.out.println("182  buffer  "+buffer.length+"  offset  "+offset+"  length  "+length);
     bb = ByteBuffer.wrap(buffer, offset, length);
     decompressedSize = bb.getInt();
     numPairs = bb.getInt();
     startPos = bb.getInt();
-    //   System.out.println("188  decompressedSize  "+ decompressedSize+"  numPairs  "+numPairs+"  startPos  "+startPos);
-    // System.out.println("Decompress a compressed page size " + compressedSize + " into a page size " + decompressedSize);
-
     curIdx = 0;
     indexOffset = valueLen == -1 ? decompressedSize - numPairs * Bytes.SIZEOF_INT : -1;
-
     if (compressAlgo == null||Algorithm.NONE==compressAlgo){
-      //   inBuf.reset(buffer, offset + 3 * Bytes.SIZEOF_INT, compressedSize - 3 * Bytes.SIZEOF_INT);
       inBuf.reset(buffer, offset, length);
       page = ensureDecompressed() ;
     }
     else{
       decompressedSize=bb.getInt();
-      //  System.out.println("196  compressAlgo  "+compressAlgo);
-      //    System.out.println(" decompressedSize  "+ decompressedSize);
-      //  System.out.println("length  "+length);
-      //  System.out.println("buffer  "+buffer.length);
-      //      inBuf.reset(buffer, offset + 3 * Bytes.SIZEOF_INT, compressedSize - 3 * Bytes.SIZEOF_INT);
       inBuf.reset(buffer, offset + 4 * Bytes.SIZEOF_INT, length - 4 * Bytes.SIZEOF_INT);
       ensureDecompress() ;
       page =  CompressensureDecompressed();
@@ -216,44 +195,24 @@ public class DictionaryBitPackingRLEIntReader implements Decoder {
 
   }
   public  void ensureDecompress() throws IOException {
-    //    if (compressAlgo != null) {
-
     org.apache.hadoop.io.compress.Decompressor decompressor = this.compressAlgo.getDecompressor();
     InputStream is = this.compressAlgo.createDecompressionStream(inBuf, decompressor, 0);
-    //   System.out.println("238   "+inBuf.getLength());
-
     ByteBuffer buf = ByteBuffer.allocate(decompressedSize);
-    // ByteBuffer buf = ByteBuffer.allocate(is.available());
-    //  System.out.println("241  "+decompressedSize);
     IOUtils.readFully(is, buf.array(),0, buf.capacity());
     is.close(); 
     this.compressAlgo.returnDecompressor(decompressor);
-    // page = buf.array();
-    //    System.out.println("240  buf.array()   "+buf.array().length);
     inBuf.reset(buf.array(), offset, buf.capacity());
-
-    //}
   }
   public byte[]  CompressensureDecompressed() throws IOException {
-    //  byte[]  bytes=inBuf.getData() ;
-    // System.out.println("227   bytes  "+inBuf.getLength());
     FlexibleEncoding.ORC.DynamicByteArray  dynamicBuffer = new FlexibleEncoding.ORC.DynamicByteArray();
     dynamicBuffer.add(inBuf.getData(),0, inBuf.getLength());
-    //  FlexibleEncoding.Parquet.DeltaBinaryPackingValuesReader reader = new FlexibleEncoding.Parquet.DeltaBinaryPackingValuesReader();
-    // System.out.println("232   "+dynamicBuffer.size());
     ByteBuffer byteBuf = ByteBuffer.allocate(dynamicBuffer.size());
-    //  System.out.println("56  "+inBuf.getInt());
     dynamicBuffer.setByteBuffer(byteBuf, 0, dynamicBuffer.size());
     byteBuf.flip();
-    //   reader.initFromPage(numPairs,  byteBuf.array(), 0);
-    // bb = ByteBuffer.wrap(page, 0, page.length);
-    //  int  count=0 ;
     DataInputBuffer  dib = new DataInputBuffer();
     dib.reset(byteBuf.array(),0, byteBuf.array().length);
-
     int dictionarySize=dib.readInt();
     int OnlydictionarySize=dib.readInt();
-    // System.out.println("281  dictionarySize   "+dictionarySize);
     dib.reset(byteBuf.array(),8, dictionarySize-4);
     byte[]  dictionaryBuffer=dib.getData() ;
     dib.reset(byteBuf.array(),4+dictionarySize, (byteBuf.array().length-dictionarySize-4));
@@ -265,7 +224,6 @@ public class DictionaryBitPackingRLEIntReader implements Decoder {
     decoding.writeInt(decompressedSize);
     decoding.writeInt(numPairs);
     decoding.writeInt(startPos);
-    //   System.out.println("numPairs  "+numPairs);
     for(int i=0; i < numPairs; i++) {
       int   tmp=cr.readInteger();
       decoding.writeInt(tmp);
@@ -273,70 +231,33 @@ public class DictionaryBitPackingRLEIntReader implements Decoder {
     byteBuf.clear();
 
     inBuf.close();
-    //  System.out.println("256   decoding   "+decoding.size());
     return decoding.getData();
 
   }
-  //  byte[] bytes=getDictionaryIdBytes(s);
-  //  byte[] dictionaryByte=  getDictionaryBytes(s[3]);
-  //
-  //  DictionaryValuesReader cr = initDicReader(DictionarySize,dictionaryByte,PrimitiveType.PrimitiveTypeName.INT32);
-  //  cr.initFromPage(fileLong, bytes, 0);
-  //  int[] result=new int[fileLong];
-  //
-  //  for (int i = 0; i < fileLong; i++) {
-  //    result[i]= cr.readInteger();
-  //    //    System.out.println(back);
-  //    //if(result[i]==initValues[i]){
-  //    count++ ; 
-  //    //}
-  //    //    else{
-  //    //      System.out.println("wrong .......................................................");
-  //    //    }
-  //
-  //  }
-
   private DictionaryValuesReader initDicReader(int DictionarySize ,byte[] bytes, PrimitiveType.PrimitiveTypeName type)
       throws IOException {
     CapacityByteArrayOutputStream  cbs=new CapacityByteArrayOutputStream(bytes.length);
     cbs.write(bytes, 0, bytes.length);
     BytesInput  bytesInput =new   BytesInput.CapacityBAOSBytesInput(cbs) ;
-
-    //  DictionaryPage dictionaryPage =new  DictionaryPage(200,50,Encoding.PLAIN_DICTIONARY);
     DictionaryPage dictionaryPage =new  DictionaryPage( bytesInput,DictionarySize,Encoding.PLAIN_DICTIONARY);
-    //  System.out.println(bytesInput.toByteArray().length);
     final ColumnDescriptor descriptor = new ColumnDescriptor(new String[] {"foo"}, type, 0, 0);
     Encoding    encoding=Encoding.PLAIN_DICTIONARY ;
     final Dictionary dictionary =  encoding.initDictionary(descriptor, dictionaryPage);    
-
     final DictionaryValuesReader cr = new DictionaryValuesReader(dictionary);
-
-
-
     return cr;
   }
 
   @Override
   public byte[]  ensureDecompressed() throws IOException {
-    //  byte[]  bytes=inBuf.getData() ;
-    // System.out.println("227   bytes  "+inBuf.getLength());
     FlexibleEncoding.ORC.DynamicByteArray  dynamicBuffer = new FlexibleEncoding.ORC.DynamicByteArray();
     dynamicBuffer.add(inBuf.getData(), 12, inBuf.getLength()-12);
-    //  FlexibleEncoding.Parquet.DeltaBinaryPackingValuesReader reader = new FlexibleEncoding.Parquet.DeltaBinaryPackingValuesReader();
-    // System.out.println("232   "+dynamicBuffer.size());
     ByteBuffer byteBuf = ByteBuffer.allocate(dynamicBuffer.size());
-    //  System.out.println("56  "+inBuf.getInt());
     dynamicBuffer.setByteBuffer(byteBuf, 0, dynamicBuffer.size());
     byteBuf.flip();
-    //   reader.initFromPage(numPairs,  byteBuf.array(), 0);
-    // bb = ByteBuffer.wrap(page, 0, page.length);
-    //  int  count=0 ;
     DataInputBuffer  dib = new DataInputBuffer();
     dib.reset(byteBuf.array(),0, byteBuf.array().length);
-
     int dictionarySize=dib.readInt();
     int OnlydictionarySize=dib.readInt();
-    // System.out.println("281  dictionarySize   "+dictionarySize);
     dib.reset(byteBuf.array(),8, dictionarySize-4);
     byte[]  dictionaryBuffer=dib.getData() ;
     dib.reset(byteBuf.array(),4+dictionarySize, (byteBuf.array().length-dictionarySize-4));
@@ -348,17 +269,13 @@ public class DictionaryBitPackingRLEIntReader implements Decoder {
     decoding.writeInt(decompressedSize);
     decoding.writeInt(numPairs);
     decoding.writeInt(startPos);
-    //   System.out.println("numPairs  "+numPairs);
     for(int i=0; i < numPairs; i++) {
       int   tmp=cr.readInteger();
       decoding.writeInt(tmp);
     }
     byteBuf.clear();
-
     inBuf.close();
-    //  System.out.println("256   decoding   "+decoding.size());
     return decoding.getData();
-
   }
 
   @Override

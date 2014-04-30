@@ -37,8 +37,8 @@ public abstract class  Encoder {
    * Coding Type
    */
   public DataOutputBuffer index = new DataOutputBuffer();
-  
- public int bytesLeft;
+
+  public int bytesLeft;
   public  ByteBuffer bb;
   public  byte[] page;
 
@@ -68,7 +68,7 @@ public abstract class  Encoder {
     DeltaBinaryPackingString,
     RedBlackTreeString
   }
-  
+
   /**
    * Layout Type
    */
@@ -78,26 +78,26 @@ public abstract class  Encoder {
     /** the value is encodes as var-length cluster */
     VARLEN 
   }
-  
+
   /** 
    * Reset the encoder to encoding other values
    */
   public abstract void reset();
-  
+
   /**
    * Get the encoded page buffer.
    * @return the reference to the encoded data buffer.
    * @throws IOException
    */
   public abstract byte[] getPage() throws IOException;
-  
+
   /**
    * Get the length of the encoded page buffer length.
    * <br> Note: this method should be called after <i>getPage()</i>
    * @return the length of the encoded page buffer.
    */
   public abstract int getPageLen();
-  
+
   /**
    * Append a value pair into the encoding buffer.
    * @param pair value pair

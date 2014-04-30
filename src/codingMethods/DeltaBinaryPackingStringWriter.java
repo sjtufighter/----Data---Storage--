@@ -31,20 +31,6 @@ import cn.ac.ncic.mastiff.utils.Bytes;
 
 public class DeltaBinaryPackingStringWriter extends Encoder {
 
-  //VarLenDecoder
-  //ByteBuffer bb;
-  //byte[] page;
-  //
-  //int pageCapacity;
-  //
-  //int dataOffset;
-  //int numPairs = 0;
-  //int startPos;
-  //
-  //public DataOutputBuffer index = new DataOutputBuffer();
-
-  //public int bytesLeft;
-
   Algorithm compressAlgo;
   org.apache.hadoop.io.compress.Compressor compressor;
   DataOutputBuffer outputBuffer = new DataOutputBuffer();
@@ -62,41 +48,32 @@ public class DeltaBinaryPackingStringWriter extends Encoder {
   public boolean append(ValPair pair) throws IOException {
     if (bytesLeft < pair.length + Bytes.SIZEOF_INT)
       return false;
-
     System.arraycopy(pair.data, 0, page, dataOffset, pair.length);
     numPairs++;
     dataOffset += pair.length;
-
     // index it offset
     index.writeInt(dataOffset);
     bytesLeft -= pair.length;
     bytesLeft -= Bytes.SIZEOF_INT;
-
     return true;
   }
-
-
   @Override
   public byte[] getPage() throws IOException {
     if (dataOffset == 3 * Bytes.SIZEOF_INT) // no data appended
       return null;
-
-    // System.arraycopy(index.getData(), 0, page, dataOffset, index.getLength());
     if (compressAlgo == null) {
-   //   bb = ByteBuffer.wrap(page, 0, dataOffset);
       bb = ByteBuffer.wrap(page, 0, page.length);
-     bb.putInt(pageCapacity - bytesLeft);
-   //   bb.putInt(page.length);
+      bb.putInt(pageCapacity - bytesLeft);
       bb.putInt(numPairs);
       bb.putInt(startPos);
-      System.out.println("91    bytesLeft  "+bytesLeft+"  dataOffset "+ dataOffset+"  page.length  "+page.length+ " numPairs  "+numPairs+" pageCapacity "+pageCapacity+"  startPos  "+startPos);
       return page;
     } else {
-      System.out.println("93     pageCapacity  "+pageCapacity+" bytesLeft  "+bytesLeft+" numPairs  "+numPairs+" startPos "+startPos);
+//      System.out.println("93     pageCapacity  "+pageCapacity+" bytesLeft  "+bytesLeft+" numPairs  "+numPairs+" startPos "+startPos);
       outputBuffer.reset();
       outputBuffer.writeInt(pageCapacity - bytesLeft);
       outputBuffer.writeInt(numPairs);
       outputBuffer.writeInt(startPos);
+      //     outputBuffer.writeInt(page.length-12);
       compressor = compressAlgo.getCompressor();
       OutputStream os =
           this.compressAlgo.createCompressionStream(outputBuffer, compressor, 0);
@@ -112,9 +89,8 @@ public class DeltaBinaryPackingStringWriter extends Encoder {
   public int getPageLen() {
     if (dataOffset == 3 * Bytes.SIZEOF_INT) // no data appended
       return 0;
-
     if (compressAlgo == null)
-   //   return pageCapacity - bytesLeft;
+      //   return pageCapacity - bytesLeft;
       return page.length;
     else
       return outputBuffer.getLength();
@@ -132,17 +108,8 @@ public class DeltaBinaryPackingStringWriter extends Encoder {
 
   @Override
   public boolean appendPage(ValPair pair) {
-    //    if (dataOffset + valueLen > pageCapacity)
-    //      return false;
-    //  LOG.info("121 ValPair  length "+pair.length);
-    // System.out.println("121 ValPair  length "+pair.length);
-
-    //page =new byte[pair.length+12+index.getData().length];
     page =new byte[pair.length+12];
     System.arraycopy(pair.data, 0, page, 12, pair.length);
-    //    numPairs++;
-    //    dataOffset += valueLen;
-
     return true;
   }
 

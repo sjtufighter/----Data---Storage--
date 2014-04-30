@@ -63,7 +63,6 @@ public class ORCStringEcnodingUtil {
   public    int[] dumpOrder ;
   private  int currentId=0;
   public  int dictionarySize=0;
-  ///////////////  reader
   public DynamicByteArray dictionaryBuffer;
   public  int[] dictionaryOffsets;
   private IntegerReader reader;
@@ -181,30 +180,22 @@ public class ORCStringEcnodingUtil {
         ) throws IOException {
       String word = context.getText().toString();
       int  tmp=context.getOriginalPosition();
-      //   hashMap.put(tmp,  word);
       context.writeBytes(stringOutput);
       lengthOutput.write(context.getLength());
-
-      //System.out.println("context.getLength()    "+context.getLength());
       dumpOrder[context.getOriginalPosition()] = currentId++;
       current += 1;
     }
   }
-
   public  void  iterator() throws IOException{
     checkContents(dictionary);
   }
-
   public  OutStream createStream(int column,
       OrcProto.Stream.Kind kind
       ) throws IOException {
     FlexibleEncoding.ORC.StreamName name = new FlexibleEncoding.ORC.StreamName(column, kind);
     BufferedStream result = null ;
     if (result == null) {
-      //    result = new BufferedStream(name.toString(), bufferSize, null);
       result = new BufferedStream(name.toString(),INITIAL_DICTIONARY_SIZE, null);
-
-      //streams.put(name, result);
     }
     return result.outStream;
   }
@@ -217,15 +208,11 @@ public   IntegerWriter createIntegerWriter(PositionedOutputStream output,
     }
   }
   public void  add(String str) throws IOException{
-
-    //  assertEquals(0, tree.getSizeInBytes());
     checkTree(dictionary);
     rows.add(dictionary.add(str));
   }
 
   public void  init() throws IOException{
-
-
 
     stringOutput=new  OutStream("test1", 1000, null, collect1) ;
     lengthOutput=new RunLengthIntegerWriterV2(
@@ -245,13 +232,9 @@ public   IntegerWriter createIntegerWriter(PositionedOutputStream output,
   public void flush() throws IOException{
     System.out.println("293    "+stringOutput.getBufferSize()); ;
     //BufferedStream bfs= (BufferedStream) stringOutput.receiver;
-
-    //  System.out.println("293    "+bfs.getBufferSize()); ;
     stringOutput.flush();
-    //  System.out.println("293    "+stringOutput.getBufferSize()); ;
     lengthOutput.flush();
     rowOutput.flush();
-
     //directStreamOutput.flush();
     //directLengthOutput.flush();
     // reset all of the fields to be ready for the next stripe.
@@ -261,21 +244,14 @@ public   IntegerWriter createIntegerWriter(PositionedOutputStream output,
 
   }
    public void rowoutPut() throws IOException{
-    //    System.out.println("287   dumpOrder   "+ dumpOrder.length);
-    //    System.out.println("287 rows.size()   "+rows.size());
     for(int i=0;i<rows.size();i++){
       rowOutput.write(dumpOrder[rows.get(i)]);
     }
   }
   public void readerInit() throws IOException{
-    // read the dictionary blob
-    // int dictionarySize = encodings.get(columnId).getDictionarySize();
-    //int dictionarySize = dictionarySize ;
-
 
     FlexibleEncoding.ORC.StreamName name = new  FlexibleEncoding.ORC.StreamName(0,
         OrcProto.Stream.Kind.DICTIONARY_DATA);
-    //System.out.println("1003 name =   "+name);
     //  InStream in = streams.get(name);
     ByteBuffer inBuf1 = ByteBuffer.allocate(collect1.buffer.size());
     collect1.buffer.setByteBuffer(inBuf1, 0, collect1.buffer.size());
@@ -285,13 +261,7 @@ public   IntegerWriter createIntegerWriter(PositionedOutputStream output,
     if (in.available() > 0) {
       dictionaryBuffer = new DynamicByteArray(64, in.available());
       dictionaryBuffer.readAll(in);
-      //   System.out.println("1006   dictionaryBuffer  "+dictionaryBuffer.size());
-
-      //    } else {
-      //      dictionaryBuffer = null;
-      //    }
       in.close();
-
       // read the lengths    google  proto buffer
       name = new StreamName(1, OrcProto.Stream.Kind.LENGTH);
       //  in = streams.get(name);
@@ -300,34 +270,17 @@ public   IntegerWriter createIntegerWriter(PositionedOutputStream output,
       inBuf2.flip();
       in = InStream.create
           ("test2", inBuf2, null, dictionarySize) ;
-      //  System.out.println("359   "+inBuf2.arrayOffset());
       //    IntegerReader lenReader = createIntegerReader(encodings.get(columnId)
       //        .getKind(), in, false);
       IntegerReader lenReader = createIntegerReader(OrcProto.ColumnEncoding.Kind.DIRECT_V2, in, false);
       int offset = 0;
-      //    if (dictionaryOffsets == null ||
-      //        dictionaryOffsets.length < dictionarySize + 1) {
       dictionaryOffsets = new int[dictionarySize + 1];
-      //  }
-
-
-
-      //      for(int j=0;j<10;j++){
-      //        System.out.println("374//////////////////////////////////   "+(int) lenReader.next());
-      //      }
       for(int i=0; i < dictionarySize; ++i) {
-
-
         dictionaryOffsets[i] = offset;
-        //        if(i<15){
-        //          System.out.println("1028  offset  "+offset+"   dictionaryOffsets[i]=     "+ dictionaryOffsets[i]);
-        //        }
         offset += (int) lenReader.next();
       }
       dictionaryOffsets[dictionarySize] = offset;
       in.close();
-      // set up the row reader'
-
       name = new FlexibleEncoding.ORC.StreamName(2, OrcProto.Stream.Kind.DATA);
       ByteBuffer inBuf3 = ByteBuffer.allocate(collect3.buffer.size());
       collect3.buffer.setByteBuffer(inBuf3, 0, collect3.buffer.size());
@@ -341,15 +294,13 @@ public   IntegerWriter createIntegerWriter(PositionedOutputStream output,
 
   public  String  readEachValue(Text previous) throws IOException{
     Text result = null;
-    // if (valuePresent) {
-    /////////////////////////////////////////////// ////this entry is used  for replace idNumber 0 1 2 3 4 5
     int entry = (int) reader.next();
     if (previous == null) {
       result = new Text();
     } else {
       result = (Text) previous;
     }
-    int offset = dictionaryOffsets[entry];//////////////////////////////////////////this offset replace length of String length
+    int offset = dictionaryOffsets[entry];
     int length;
     // if it isn't the last entry, subtract the offsets otherwise use
     // the buffer length.
@@ -366,9 +317,7 @@ public   IntegerWriter createIntegerWriter(PositionedOutputStream output,
     } else {
       result.clear();
     }
-    // }
     return result.toString();
-
   }
  public  IntegerReader createIntegerReader(OrcProto.ColumnEncoding.Kind kind,
       InStream in,
@@ -385,7 +334,6 @@ public   IntegerWriter createIntegerWriter(PositionedOutputStream output,
     }
   }
  public void foreach() throws IOException{
-    //  System.out.println("434    rows.size()  "+rows.size());
     for(int i=0;i<rows.size();i++){
       System.out.println("result  "+readEachValue(null));
     }
@@ -399,14 +347,8 @@ public   IntegerWriter createIntegerWriter(PositionedOutputStream output,
     test.iterator();
     test.rowoutPut();
     test.flush();
-    //    System.out.println("446   "+collect1.buffer.size());
-    //    System.out.println("446   "+collect2.buffer.size());
-    //    System.out.println("446   "+collect3.buffer.size());
-
-
     test.readerInit();
     test.foreach();
-    /////////////////////////////finish Write
 
 
   }

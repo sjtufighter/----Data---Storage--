@@ -35,16 +35,6 @@ public class  RunLengthEncodingIntWriter  extends  Encoder {
 
   static final Log LOG = LogFactory.getLog(FixedLenEncoder.class);
 
-  //  public  ByteBuffer bb;
-  //  public  byte[] page;
-  //
-  //  public int pageCapacity;
-  //  public int valueLen;
-  //
-  //  public  int dataOffset;
-  //  public  int numPairs = 0;
-  //  public int startPos;
-
   /** 
    * Which compression algorithm used to compress a page of data 
    * 
@@ -108,16 +98,7 @@ public class  RunLengthEncodingIntWriter  extends  Encoder {
 
   @Override
   public boolean appendPage(ValPair pair) {
-    //    if (dataOffset + valueLen > pageCapacity)
-    //      return false;
-    //  LOG.info("121 ValPair  length "+pair.length);
-    // System.out.println("121 ValPair  length "+pair.length);
-
     page =new byte[pair.length+12];
-    System.arraycopy(pair.data, 0, page, 12, pair.length);
-    //    numPairs++;
-    //    dataOffset += valueLen;
-
     return true;
   }
 
@@ -127,13 +108,10 @@ public class  RunLengthEncodingIntWriter  extends  Encoder {
       return null;
     /** We do not compressed the page of data */
     if (compressAlgo == null) {
-      //  bb = ByteBuffer.wrap(page, 0, dataOffset);
       bb = ByteBuffer.wrap(page, 0, page.length);
       bb.putInt(dataOffset);
       bb.putInt(numPairs);
       bb.putInt(startPos);
-      // LOG.info("134  page .length "+page.length );
-      //   System.out.println("154 dataoffset  "+dataOffset+" numPairs  "+numPairs+"  startPos  "+startPos);
       return page;
     } else { // compress a page using the specified <i>Algorithm</i>
       outputBuffer.reset();

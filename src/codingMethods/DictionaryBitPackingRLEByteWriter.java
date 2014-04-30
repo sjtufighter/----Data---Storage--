@@ -98,16 +98,8 @@ public class DictionaryBitPackingRLEByteWriter extends Encoder {
 
   @Override
   public boolean appendPage(ValPair pair) {
-    //    if (dataOffset + valueLen > pageCapacity)
-    //      return false;
-    //   LOG.info("121 ValPair  length "+pair.length);
-    //   System.out.println("121 ValPair  length "+pair.length);
-
     page =new byte[pair.length+12];
     System.arraycopy(pair.data, 0, page, 12, pair.length);
-    //    numPairs++;
-    //    dataOffset += valueLen;
-
     return true;
   }
 
@@ -122,8 +114,6 @@ public class DictionaryBitPackingRLEByteWriter extends Encoder {
       bb.putInt(dataOffset);
       bb.putInt(numPairs);
       bb.putInt(startPos);
-      //   LOG.info("134  page .length "+page.length );
-      //  System.out.println("154 dataoffset  "+dataOffset+" numPairs  "+numPairs+"  startPos  "+startPos);
       return page;
     } else { // compress a page using the specified <i>Algorithm</i>
       outputBuffer.reset();

@@ -77,18 +77,14 @@ public class MVDecoder implements Decoder {
    * @param valueLen_ the length of the value
    * @param algorithm which compression algorithm used to compress the data
    */
-  public MVDecoder(int sortedCol, int valueLen_, Algorithm algorithm) {
-    System.out.println("81  MVDEcoder  gou zao  han shu ");
-    System.out.println("82   sortCol   "+sortedCol+"   valuenLen  "+valueLen );
+  public MVDecoder(int sortedCol, int valueLen_, Algorithm algorithm) {;
     valueLen = valueLen_;
     compressAlgo = algorithm;
-
     mvChunk = new MultiChunk(sortedCol, true, true, valueLen_);
   }
 
   @Override
   public ValPair begin() throws IOException {
-    System.out.println("89     begin()    ensureDecompressed()");
     ensureDecompress();
     pair.data = page;
     pair.offset = offset + 3 * Bytes.SIZEOF_INT;
@@ -106,7 +102,6 @@ public class MVDecoder implements Decoder {
   @Override
   public ValPair end() throws IOException {
     ensureDecompress();
-    System.out.println("106   end()    ensureDecompressed()");
     if (numPairs == 1) 
       return begin();
     else {
@@ -152,7 +147,6 @@ public class MVDecoder implements Decoder {
   @Override
   public Chunk nextChunk() throws IOException {
     if (curIdx >= 1) return null;
-    System.out.println("151  nextChunk()   ensureDecompressed() ");
     ensureDecompress();
     mvChunk.setBuffer(page, offset +  3 * Bytes.SIZEOF_INT,
         offset + indexOffset, numPairs, startPos);
@@ -167,15 +161,11 @@ public class MVDecoder implements Decoder {
 
     if (shadowChunk == null)
       shadowChunk = new MultiChunk(0, true, true, valueLen);
-    System.out.println("166   getChunkByPosition   ensureDecompressed() ");
     ensureDecompress();
-    System.out.println("172  page.length  "+page.length+"  offset "+offset+" offset + indexOffset   "+(offset + indexOffset)+"  numPairs "+numPairs+" startPos  "+startPos);
     shadowChunk.setBuffer(page, offset +  3 * Bytes.SIZEOF_INT,
         offset + indexOffset, numPairs, startPos);
-
     return shadowChunk;
   }
-
   @Override
   public void reset() {
     curIdx = 1;
@@ -183,26 +173,18 @@ public class MVDecoder implements Decoder {
 
   @Override
   public void reset(byte[] buffer, int offset, int length) {
-   // LOG.info("180  MV decoder nextPage  ");
-    System.out.println("180  MV decoder nextPage  ");
     this.offset = offset;
     compressedSize = length;
-
     bb = ByteBuffer.wrap(buffer, offset, compressedSize);
     decompressedSize = bb.getInt();
     numPairs = bb.getInt();
     startPos = bb.getInt();
-   
-    // System.out.println("Decompress a compressed page size " + compressedSize + " into a page size " + decompressedSize);
-
     curIdx = 0;
     indexOffset = valueLen == -1 ? decompressedSize - numPairs * Bytes.SIZEOF_INT : -1;
-   System.out.println("200  indexOffset  "+indexOffset+" numPairs "+numPairs+"  ");
     if (compressAlgo == null)
       page = buffer;
     else {
-      inBuf.reset(buffer, offset + 3 * Bytes.SIZEOF_INT, compressedSize - 3 * Bytes.SIZEOF_INT);
-    
+      inBuf.reset(buffer, offset + 3 * Bytes.SIZEOF_INT, compressedSize - 3 * Bytes.SIZEOF_INT); 
       page = null;
     }
   }
@@ -216,10 +198,8 @@ public class MVDecoder implements Decoder {
       is.close(); 
       this.compressAlgo.returnDecompressor(decompressor);
       page = buf.array();
-      System.out.println("213   ensureDecompressed()   "+page.length);
     }
   }
-
   @Override
   public boolean skipToPos(int pos) {
     if (pos < startPos || pos >= startPos + numPairs)

@@ -41,25 +41,25 @@ public class GuoSiJieRLEDecoder implements Decoder {
 
   ValPair pair = new ValPair();
   int valueLen;
-  
+
   /** RLE related structures */
   RLEChunk rleBlock;
   RLETriple rleTriple;
   ValPair pairInTriple;
-  
+
   RLEChunk shadowChunk;
   RLETriple shadowTriple;
   ValPair shadowVP;
-  
+
   /** Encoded page data */
   byte[] page = null;
   int offset;
   int length;
-  
+
   /** statistics of page data */
   int numPairs;
   int startPos;
-  
+
   /** used for iteration */
   int curIdx = -1;
   int curTripleOffset;
@@ -67,26 +67,26 @@ public class GuoSiJieRLEDecoder implements Decoder {
   int tripleOffsetInPage;
   int curStartPos = -1;
   int curNumReps = 0;
-  
+
   /** used for var-length cluster */
   ByteBuffer bb;
   IntBuffer index = null;
   int indexOffset;
-  
+
   public GuoSiJieRLEDecoder(int sortedCol, int valueLen_) {
-   System.out.println("77  RLE Decoder ");
-   System.out.println("sortedCol=   "+sortedCol+"   valueLen_   "+valueLen_);
+    System.out.println("77  RLE Decoder ");
+    System.out.println("sortedCol=   "+sortedCol+"   valueLen_   "+valueLen_);
     pairInTriple = new ValPair();
     rleTriple = new RLETriple(pairInTriple, 0, 0);
     rleBlock = new RLEChunk(rleTriple, sortedCol);
-    
+
     shadowVP = new ValPair();
     shadowTriple = new RLETriple(shadowVP, 0, 0);
     shadowChunk = new RLEChunk(shadowTriple, sortedCol);
-    
+
     valueLen = valueLen_;
   }
-  
+
   @Override
   public ValPair begin() {
     System.out.println("92  begin ");
@@ -112,7 +112,7 @@ public class GuoSiJieRLEDecoder implements Decoder {
     pair.data = page;
     if (valueLen > 0) {
       pair.offset = offset + 3 * Bytes.SIZEOF_INT + 
-      (numPairs - 1) * (valueLen + 2 * Bytes.SIZEOF_INT);
+          (numPairs - 1) * (valueLen + 2 * Bytes.SIZEOF_INT);
       pair.length = valueLen;
     } else {
       int prevOffset = numPairs == 1 ? 3 * Bytes.SIZEOF_INT :
@@ -157,23 +157,23 @@ public class GuoSiJieRLEDecoder implements Decoder {
   public Chunk nextChunk() throws IOException {
     System.out.println("158   nextChunk()");
     if (curIdx < 0 || curIdx >= numPairs) return null;
-    
+
     curTripleLength = valueLen > 0 ? valueLen : 
       index.get(curIdx) - tripleOffsetInPage - 2 * Bytes.SIZEOF_INT;
-    
+
     pairInTriple.data = page;
     pairInTriple.offset = curTripleOffset;
     pairInTriple.length = curTripleLength;
     curStartPos = pairInTriple.pos = Bytes.toInt(page, 
         curTripleOffset + curTripleLength, Bytes.SIZEOF_INT);
     curNumReps = Bytes.toInt(page, curTripleOffset + curTripleLength + Bytes.SIZEOF_INT, 
-                             Bytes.SIZEOF_INT);
+        Bytes.SIZEOF_INT);
     rleTriple.setTriple(pairInTriple, pairInTriple.pos, curNumReps);
-    
+
     curTripleOffset += curTripleLength + 2 * Bytes.SIZEOF_INT;
     tripleOffsetInPage += curTripleLength + 2 * Bytes.SIZEOF_INT;
     curIdx++;
-    
+
     rleBlock.reset();
     return rleBlock;
   }
@@ -221,11 +221,9 @@ public class GuoSiJieRLEDecoder implements Decoder {
     System.out.println("214   RLEDecoder  reset ");
     this.page = buffer;
     this.offset = offset;
-    this.length = length;
-    
-    
+    this.length = length;   
     numPairs = Bytes.toInt(page, offset + Bytes.SIZEOF_INT, Bytes.SIZEOF_INT);
-    
+
     curIdx = 0;
     curStartPos = -1;
     curTripleOffset = offset + 3 * Bytes.SIZEOF_INT;
@@ -235,21 +233,15 @@ public class GuoSiJieRLEDecoder implements Decoder {
       // System.out.println("Index offset in Page is " + indexOffset);
       bb = ByteBuffer.wrap(page, offset + indexOffset, numPairs * Bytes.SIZEOF_INT);
       index = bb.asIntBuffer();
-      
+
     }
-    
     int tmpTripleLength = valueLen > 0 ? valueLen : 
       index.get(0) - tripleOffsetInPage - 2 * Bytes.SIZEOF_INT;
     startPos = Bytes.toInt(page, curTripleOffset + tmpTripleLength, Bytes.SIZEOF_INT);
-    
-    // System.err.println("NumTriples in Page is " + numPairs + ", start from pos " + startPos);
-    
   }
 
   @Override
   public boolean skipToPos(int pos) {
-    System.out.println("251   skipToPosition");
-    // System.err.println("[RLEDecompressor]skipToPos : skip to pos " + pos + ", curStartPos is " + curStartPos);
     if (curStartPos == -1) {
       curTripleLength = valueLen > 0 ? valueLen : 
         index.get(curIdx) - tripleOffsetInPage - 2 * Bytes.SIZEOF_INT;
@@ -261,18 +253,15 @@ public class GuoSiJieRLEDecoder implements Decoder {
       tripleOffsetInPage += (curTripleLength + 2 * Bytes.SIZEOF_INT);
       curTripleLength = valueLen > 0 ? valueLen : 
         index.get(curIdx) - tripleOffsetInPage - 2 * Bytes.SIZEOF_INT;
-      
       curStartPos = Bytes.toInt(page, curTripleOffset + curTripleLength, Bytes.SIZEOF_INT);
       curNumReps = Bytes.toInt(page, curTripleOffset + curTripleLength + Bytes.SIZEOF_INT, Bytes.SIZEOF_INT);
       curIdx++;
     }
-    // System.err.println("[RLEDecompressor]skipToPos : now @ pos " + curStartPos + ", numReps " + curNumReps + ".");
     if (curIdx >= numPairs)
       return false;
     else
       return true;
   }
-
   @Override
   public byte[] ensureDecompressed() throws IOException {
     // TODO Auto-generated method stub
