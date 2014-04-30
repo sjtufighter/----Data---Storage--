@@ -1,12 +1,20 @@
 整型编码调研
+----
 by 王猛
-1.Parquet部分的整型编码：
+
+1.Parquet部分的整型编码
+----
 Parquet的整数编码主要分为 plain Encoding ，Dictionary Encoding，Delta Encoding，bit-packing Enconding  和 Run Length Encoding 基本编码。
+
 1.1 plain Encoding：
+
 最简单编码。即按照value出现的顺序依次进行存储，唯一需要注意的是，在存储值的时候采用的是little endian，对于像Int这样由多个字节组成的数值类型，其采用的是先存储低位字节，然后存储高位字节。原因是发现通过对Integer.reverseBytes(in.readInt())和 keep a member byte[4], wrapped by an IntBuffer with appropriate endianness set  and call IntBuffer.get()这两个方法的测试，小端存储比大端存储更快。（尚不清楚这两个更快为何决定编码要使用小端存储，或者说这两个操作是编码过程中最常使用的？）。
 1.2 Dictionary Encoding：
+
 字典编码主要由字典中的字典值以及存储value的字典项编号组成。比如：现在字典是5（1）,8（2）,10（3） 其字典值是5,8,10.对应的字典编号是1,2,3.现在需要存储数值5,8,5,10,8. 那么存储的顺序值就是其id号，即12132.
+
 1.3 bit-packing Enconding：
+
 举例来说明，现在需要存储java  int类型的0,1,2,3,4,5,6,7这8个值，在不做任何处理的情况下需要占用的大小是4*8即32个字节,32*8 个位。现在采用位编码来存储这些数据：存储规则是计算需要存储的值中的在最大值的实际占用的有效位。比如上述值中的最大值是7，其具体存储是00000000  00000000  00000000  00000111
 则其有效位是111，我们只需要用三个bit就可以存储所有比此最大值小的值，所以采用如下的位编码进行存储，占用的存储空间是3*8=24 bit，大大节省了存储空间：
 dec value: 0   1   2   3   4   5   6   7
@@ -15,9 +23,13 @@ bit label: ABC DEF GHI JKL MNO PQR STU VWX
 would be encoded like this where spaces mark byte boundaries (3 bytes):
 bit value: 00000101 00111001 01110111
 bit label: ABCDEFGH IJKLMNOP QRSTUVWX
+
 1.4 Run Length Encoding：  
+
 此编码对于连续多次出现的重复编码很有效，这里的RLE编码和郭师兄的RLE的主要区别是，其内部使用了前面提到的位编码来存储值和值出现的次序。比如111222（假设每个值用一个字节表示，则一共6个字节），即 1 3 2 3 。则存储是： 00000001   00000011  00000010  00000011  需要4个字节。如果采用位编码的话，则存储是：01 11 10 11 一共8个位即可以表达。
+
 1.5 Delta  bit -packing  Encoding：
+
 即增量编码和位编码混合编码。以7,5,3,1,2,3,4,5为例：先计算出两个相邻的值的增量，分别为 -2 -2 -2 1 1 1 1 ，在计算的同时保存最小的增量值，这里是-2.需要注意的是最小的增量值-2使用zigzag VLQ  int(此时-2变为3)类型来保存的。接下来对-2 -2 -2 1 1 1 1 分别减去最小的增量值-2,则变为 0,0,0，3,3,3，3 ，最大值3的二进制代码为0000000 0000000  0000000 000000011 有效编码是11两位，那么就使用2个bit来保存所有的增量差, 所以这里用一个byte来保存width 2.对这个序列采用位编码。即依次为00 00 00 11 11 11 11 。增量编码保存值的顺序为：first value(7  zigzag VLQ int 变为14)  minimum  delta(- 2 zigzag VLQ int 变为3)  bitwidth(2  1byte)  bitcode(00 00 00 11 11 11 11) .所以7,5,3,1,2,3,4,5的增量编码为：00001110（14） 00000011（3） 00000010（2）  00000011 111111 共计花费8+8+8+14=38位，比原先的32*8=256位减少很多。
 在这里简要说一下zigzag VLQ int，这种编码风格源自于google protobuffer, zigzag主要是应对针对负数的编码，该编码会将有符号整型映射为无符号整型，以便绝对值较小的负数仍然可以有较小的varint编码值，如-1。下面是ZigZag对照表：
 Signed Original	Encoded As
@@ -33,8 +45,11 @@ Signed Original	Encoded As
       需要补充说明的是，Protocol Buffer在实现上述位移操作时均采用的算术位移，因此对于(n >> 31)和(n >> 63)而言，如果n为负值位移后的结果就是-1，否则就是0。
 
 2.ORC的整型编码调研
+----
+
 2.1 位编码
 位编码适合于用来存储NULL值，如果值为NULL，则用bit 0表示，否则用bit 1表示不为NULL(此时需结合其他编码)。
+
 2.2 RLE编码
 对于int,long,short类型的字段，使用RLE编码。该编码能够对等差数列（完全相等也属于等差数列）进行压缩，该等差数列需要满足以下两个条件：
     1．至少有含3个元素满足等差数列
@@ -75,6 +90,7 @@ Signed Original	Encoded As
 4. 拼在一起，就变成了 10001001  00000001 只需要两个字节就可以存储。 
 
 3  对比归纳
+----
 编码来源	编码方式	优点	缺点	典型应用	是否发现改进点
 Parquet	plain Encoding	基本无	最次的选择	在高效编码方式不适合使用的情况下使用	
 Parquet	bit-packing Enconding	运用位编码节省了存储空间（需要提示一点的是，位编码很适合于非负整数的编码，对于负整数的编码，应为有符号位则较麻烦，后续的集中位编码的应用案列都较好的避开了出现负数的序列的情况）	以java int类型为例（4个字节），如果值为011111111 11111111 11111111 11111111 这种很大的情况下，不能起到节省空间的作用；
@@ -96,7 +112,9 @@ ORC	variable-width encoding	对于int,long这种本身需要较多字节的类�
 组合ORC	bit coding—RLE coding-- variable-width encoding	这三种编码的组合编码可以应对NULL值，连续出现等差数列以及采用variable-width encoding 节省存储空间。	没有字典编码对于非连续出现的重复值进行编码的功能。也不适合对byte类型进行编码。所以可以考虑在此基础上加上一个字典编码在外围，内部再依据重复值的分布情况设定一个判断条件决定采用单纯的variable-width encoding或者是位编码或者是bit coding—RLE coding-- variable-width encoding。	有NULL值出现，存在较多的等差数列，存储值的普遍偏小且数值类型非byte型	可以考虑增加字典编码应对对重复值较多但不连续的情况。
 
 以上表格是现在所能得出的总结，我相信还会有更多的发现。
+
 4.编码性能的测试设计
+----
 Parquet和ORC都有自己的test code，但是据我理解,他们的test是用来判定编码结果的准确性的单元测试。所以打算自己写test code.
 在上面的总结表中，我们可以发现某些编码在理论上具有很明显的压缩数据的优势（此处优势主要是指size上的优势，不太容易估算出压缩和解压缩的时间消耗），而且其优势是适合于不同的值分布情况，所以决定先对那几种优势明显的数据进行测试，具体来说是variable-width encoding， Delta  bit -packing  Encoding， Dictionary Encoding +bit-packing Enconding， Dictionary Encoding+ Run Length Enconding，  bit coding+RLE coding+variable-width encoding。
 1.	剥离每一种编码的具体源码，对于使用组合编码的需要整合不同的编码源码。
@@ -105,7 +123,9 @@ Parquet和ORC都有自己的test code，但是据我理解,他们的test是用�
 4.	读取编码之后的文件，在保证正确性的前提下记录其完成全部值的反编码所需要的时间，以及CPU等性能消耗指标。
 5.	byte,int和long型虽然同属于整型编码，但是要区别对待，应为有的编码算法只适合于其中某种类型。比如byte的值就不适合用google protobuff 编码。Long这种占用字节数越大的类型使用编码的效果就越明显。
 6.	为了确保测试的可靠性，即使是对一种编码进行测试，可能还需要设置此编码的参数进行多次测试，比如说Delta  bit -packing  Encoding就需要测试不同基本数列单元下的性能。
+
 5参考资料
+----
 1.	https://github.com/Parquet/parquet-format/blob/master/Encodings.md#run-length-encoding--bit-packing-hybrid-rle--3
 2.	http://docs.hortonworks.com/HDPDocuments/HDP2/HDP-2.0.0.2/ds_Hive/orcfile.html
 3.	http://code.google.com/p/protobuf/
