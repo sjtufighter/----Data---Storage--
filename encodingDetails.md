@@ -1,9 +1,9 @@
 整型编码调研
 ----
 
-1.twitter部分整型编码
+1.整型编码(http://lemire.me/blog/archives/2012/03/06/how-fast-is-bit-packing/)
 ----
-Parquet的整数编码主要分为 plain Encoding ，Dictionary Encoding，Delta Encoding，bit-packing Enconding  和 Run Length Encoding 基本编码。
+此部分主要分为 plain Encoding ，Dictionary Encoding，Delta Encoding，bit-packing Enconding  和 Run Length Encoding 基本编码。
 
 1.1 plain Encoding：
 
@@ -46,7 +46,7 @@ Signed Original	Encoded As
       需要补充说明的是，Protocol Buffer在实现上述位移操作时均采用的算术位移，因此对于(n >> 31)和(n >> 63)而言，如果n为负值位移后的结果就是-1，否则就是0。
 
 
-2.其他来源整型编码调研
+2.其他来源整型编码
 ----
 
 2.1 位编码
