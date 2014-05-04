@@ -1,7 +1,7 @@
 整型编码调研
 ----
 
-1.整型编码(http://lemire.me/blog/archives/2012/03/06/how-fast-is-bit-packing/)
+1.整型编码(http://lemire.me/blog/archives)
 ----
 此部分主要分为 plain Encoding ，Dictionary Encoding，Delta Encoding，bit-packing Enconding  和 Run Length Encoding 基本编码。
 
