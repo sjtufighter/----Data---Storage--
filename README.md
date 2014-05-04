@@ -1,6 +1,6 @@
   这个项目主要目的是对Hive所支持的存储结构进行扩展。当前Hive所支持的存储结构是textfile,sequencefile,rcfile以及最新出来的ORC。他们各自的优势在这里就不详细说明了。下面谈谈要实现的存储结构FOSF（Flexible Optimized SegmentFile)的特点。
 
-  整个工程的有效代码约21000行，调用第三方代码约10万行（twitter-Parquet,Hive，hadoop-HDFS，主要是有些算法的实现很复杂),涉及到的相关代码约数十万行（主要涉及Hive本身和Twitter Parquet,HadoopHDFS）
+  整个工程的有效代码约21000行，涉及到的代码约数十万行。
   
 FOSF存储结构
 =========
