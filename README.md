@@ -11,7 +11,7 @@ FOSF存储结构
      
    紧接着，鉴于当前所采用的压缩算法大多是LZO ZLIB等重量级的压缩编码方式，为了提高压缩性能进而节省存储空间以及提高查询性能，我们决定依据每一个数据列的属性和分布情况（连续重复，重复不连续，等差数列，相邻数值增量较小，甚至非重复个数较少等）采用最适合其的编码方式，具体的编码方式有deltabitPacking, DictionaryRedBlackTree,RunLengthEncoding,googleProtoBufferVLQ等编码，核心是考虑数据类型特点以及分布情况，关键技术是位编码，增量编码，字典编码，VLQ等,编码部分参考了twitter开源的产品 ，但是其算法是和其程序耦合在一起的，耦合度较高，需要开发者自己花功夫从其中提取，并在现有编码基础上组合出更加高效的编码方式。
    部分参考http://lemire.me/blog/archives/2012/03/06/how-fast-is-bit-packing/
-   简而言之，FOSF的特点是行列混合存储+列索引+灵活最适编码压缩
+   简而言之，FOSF的特点是**行和列混合存储+最适索引+数据统计+自适应的最优化压缩算法（deltaBitPacking Trie) +filterPushDown+牺牲精度的近似查询**
    
 实现方式
 ----
